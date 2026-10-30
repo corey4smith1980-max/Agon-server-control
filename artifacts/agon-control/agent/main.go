@@ -223,6 +223,7 @@ func enroll(cfg *Config, configPath string) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
 	if err != nil {
 		return fmt.Errorf("enrollment request: %w", err)

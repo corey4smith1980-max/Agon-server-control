@@ -9,6 +9,14 @@ import { Badge, Button, DetailRow, PageHeader, Panel, Toggle } from '../componen
 
 interface Artifact { platform: string; arch: string; file: string; bytes: number; sha256: string; version: string }
 
+async function loadAgentManifest(): Promise<Artifact[]> {
+  const response = await fetch(artifactPath('agent/manifest.json'), { cache: 'no-store' })
+  if (!response.ok) throw new Error('Artifact manifest unavailable')
+  const data = await response.json()
+  if (!Array.isArray(data.artifacts)) throw new Error('Artifact manifest is invalid')
+  return data.artifacts as Artifact[]
+}
+
 const platformMeta: Record<Platform, { title: string; subtitle: string; icon: typeof Laptop; arches: Array<{ value: string; label: string }>; package: string }> = {
   windows: { title: 'Windows', subtitle: 'Native EXE service', icon: Laptop, arches: [{ value: 'amd64', label: 'x64 (Intel / AMD)' }, { value: 'arm64', label: 'ARM64' }], package: 'EXE + PowerShell installer' },
   macos: { title: 'macOS', subtitle: 'LaunchDaemon', icon: Apple, arches: [{ value: 'arm64', label: 'Apple silicon' }, { value: 'amd64', label: 'Intel x64' }], package: 'Native binary + shell installer' },
@@ -97,7 +105,7 @@ export default function Deployment() {
   const [packageInfo, setPackageInfo] = useState<{ name: string; blob: Blob; sha: string; size: number } | null>(null)
 
   useEffect(() => {
-    fetch(artifactPath('agent/manifest.json')).then((response) => { if (!response.ok) throw new Error('Artifact manifest unavailable'); return response.json() }).then((data) => setManifest(data.artifacts)).catch((error) => setManifestError(error.message))
+    loadAgentManifest().then(setManifest).catch((error) => setManifestError(error.message))
   }, [])
   const choosePlatform = (next: Platform) => {
     setPlatform(next)
@@ -109,15 +117,19 @@ export default function Deployment() {
   const artifact = useMemo(() => manifest.find((item) => item.platform === platform && item.arch === arch), [manifest, platform, arch])
 
   const buildPackage = async () => {
-    if (!artifact) return
     setBuilding(true); setProgress(4); setPackageInfo(null)
     try {
+      const latestManifest = await loadAgentManifest()
+      setManifest(latestManifest)
+      setManifestError('')
+      const currentArtifact = latestManifest.find((item) => item.platform === platform && item.arch === arch)
+      if (!currentArtifact) throw new Error(`No agent build is available for ${platform}/${arch}`)
       setStage('Fetching verified native agent')
-      const response = await fetch(artifactPath(artifact.file))
+      const response = await fetch(artifactPath(currentArtifact.file), { cache: 'no-store' })
       if (!response.ok) throw new Error(`Agent download failed (${response.status})`)
       const binary = await response.arrayBuffer()
       const binaryHash = await sha256(binary)
-      if (binaryHash !== artifact.sha256) throw new Error('Agent checksum mismatch. Package generation stopped.')
+      if (binaryHash !== currentArtifact.sha256) throw new Error('Agent checksum mismatch. Package generation stopped.')
       setProgress(24); setStage('Issuing one-time installer enrollment')
       const enrollmentResponse = await fetch('/api/agon/enrollment-tokens', {
         method: 'POST',

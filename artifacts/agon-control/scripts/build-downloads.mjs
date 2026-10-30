@@ -106,6 +106,7 @@ async function makeZip(files, destination) {
 
 const agentFiles = [
   'main.go',
+  'main_test.go',
   'go.mod',
   'go.sum',
   'service_android.go',

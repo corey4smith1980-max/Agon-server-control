@@ -1,1 +1,2 @@
 - [Agon Clerk React version isolation](agon-clerk-react-versions.md) — keep Clerk's React patch local; the shared workspace catalog is used by Expo.
+- [Hosted agent enrollment request header](agon-agent-request-header.md) — include the required request marker on the native enrollment POST.
