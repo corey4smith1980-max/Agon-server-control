@@ -14,8 +14,8 @@ export function IconButton({ label, children, className, ...props }: ButtonHTMLA
   return <button aria-label={label} title={label} className={cn('icon-button', className)} {...props}>{children}</button>
 }
 
-export function Panel({ children, className, interactive = false }: { children: ReactNode; className?: string; interactive?: boolean }) {
-  return <section className={cn('panel', interactive && 'panel-interactive', className)}>{children}</section>
+export function Panel({ children, className, interactive = false, testId }: { children: ReactNode; className?: string; interactive?: boolean; testId?: string }) {
+  return <section data-testid={testId} className={cn('panel', interactive && 'panel-interactive', className)}>{children}</section>
 }
 
 export function PageHeader({ eyebrow, title, description, actions }: { eyebrow?: string; title: string; description: string; actions?: ReactNode }) {

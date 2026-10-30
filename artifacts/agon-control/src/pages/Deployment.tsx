@@ -1,6 +1,6 @@
 import JSZip from 'jszip'
 import { motion } from 'framer-motion'
-import { Apple, Check, CloudDownload, Code2, Copy, Download, FileCheck2, Laptop, LoaderCircle, PackageCheck, PackagePlus, Server, ShieldCheck, Smartphone, Terminal } from 'lucide-react'
+import { Apple, Check, CloudDownload, Code2, Copy, Download, ExternalLink, FileCheck2, Laptop, LoaderCircle, PackageCheck, PackagePlus, Server, ShieldCheck, Smartphone, Terminal } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { Platform } from '../lib/types'
 import { artifactPath, cn, copyText, formatBytes, platformLabel } from '../lib/utils'
@@ -191,6 +191,15 @@ export default function Deployment() {
   const copy = async (value: string, label: string) => { await copyText(value); toast(`${label} copied`) }
   return <div>
     <PageHeader eyebrow="Real artifacts · Agent v1.0.0" title="Agent deployment" description="Download native binaries or build a configured installer around checksum-verified agents. Installation requires administrator consent." actions={<><Button icon={Download} onClick={() => { const anchor = document.createElement('a'); anchor.href = artifactPath('downloads/agon-agent-builds.zip'); anchor.download = ''; anchor.click() }}>Agent builds ZIP</Button><Button icon={Code2} onClick={() => { const anchor = document.createElement('a'); anchor.href = artifactPath('downloads/agon-agent-source.zip'); anchor.download = ''; anchor.click() }}>Agent source</Button></>} />
+    <Panel className="mb-4 flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between" testId="card-quick-assist-shortcut">
+      <div className="flex items-start gap-3">
+        <div className="rounded-xl border border-lime-300/15 bg-lime-300/[0.06] p-2.5 text-lime-300"><Laptop size={18} /></div>
+        <div><p className="text-sm font-medium text-white">Need live desktop control now?</p><p className="mt-1 max-w-2xl text-xs leading-5 text-slate-400">Use Microsoft Quick Assist for a user-approved session. The Agon agent installs for inventory and diagnostics; it does not provide screen or keyboard/mouse control.</p></div>
+      </div>
+      <a data-testid="link-deployment-quick-assist" href="https://aka.ms/quickassist" target="_blank" rel="noreferrer" className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 self-start rounded-xl bg-lime-300 px-4 py-2 text-xs font-semibold text-[#15200c] transition hover:bg-lime-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-300 sm:self-auto">
+        Open Quick Assist <ExternalLink size={14} />
+      </a>
+    </Panel>
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,.8fr)]">
       <div className="space-y-4">
         <Panel className="p-5 sm:p-6">
