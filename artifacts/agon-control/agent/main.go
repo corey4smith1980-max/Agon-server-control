@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -258,9 +259,11 @@ func runAgent(ctx context.Context, cfg Config, configPath string) error {
 	}
 	backoff := time.Second
 	for {
+		connectionStarted := time.Time{}
 		if err := enroll(&cfg, configPath); err != nil {
 			log.Printf("enrollment: %v", err)
 		} else {
+			connectionStarted = time.Now()
 			err := runConnection(ctx, cfg)
 			if ctx.Err() != nil {
 				return nil
@@ -268,15 +271,24 @@ func runAgent(ctx context.Context, cfg Config, configPath string) error {
 			if err != nil {
 				log.Printf("connection: %v", err)
 			}
-			backoff = time.Second
+			if time.Since(connectionStarted) >= 30*time.Second {
+				backoff = time.Second
+			}
+		}
+		retryDelay := backoff
+		if backoff > time.Second {
+			retryDelay += time.Duration(rand.Int63n(int64(backoff / 4)))
 		}
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(backoff):
+		case <-time.After(retryDelay):
 		}
 		if backoff < 30*time.Second {
 			backoff *= 2
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
 		}
 	}
 }
@@ -307,6 +319,14 @@ func runConnection(ctx context.Context, cfg Config) error {
 		return err
 	}
 	defer conn.Close()
+	conn.SetReadLimit(64 * 1024)
+	const pongWait = 70 * time.Second
+	if err := conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+		return err
+	}
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(pongWait))
+	})
 	client := &socketClient{conn: conn}
 	info := currentDeviceInfo(cfg)
 	if err := client.send(Envelope{Type: "hello", Device: &info}); err != nil {
@@ -316,6 +336,10 @@ func runConnection(ctx context.Context, cfg Config) error {
 
 	connectionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	go func() {
+		<-connectionCtx.Done()
+		_ = conn.Close()
+	}()
 	go func() {
 		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
