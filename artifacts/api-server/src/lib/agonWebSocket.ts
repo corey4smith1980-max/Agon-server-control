@@ -17,6 +17,9 @@ const allowedActions = new Set([
   "diagnostics.network",
   "session.request",
 ]);
+const dispatchingDevices = new Set<string>();
+const retryRunningJobsAfterMs = 60_000;
+const pingIntervalMs = 30_000;
 
 type AgentDeviceInfo = {
   hostname?: string;
@@ -158,25 +161,77 @@ async function sendQueuedJobs(
   deviceId: string,
   socket: WebSocket,
 ): Promise<void> {
-  const jobs = await listRecords(ownerId, "job", 1000);
-  for (const job of jobs) {
-    if (job.data.deviceId !== deviceId || job.data.status !== "queued") continue;
-    if (socket.readyState !== WebSocket.OPEN) return;
-    const payload = (job.data.payload ?? {}) as Record<string, unknown>;
-    socket.send(
-      JSON.stringify({
-        type: "command",
-        jobId: job.id,
-        action: job.data.action,
-        payload,
-      }),
-    );
-    const updatedAt = new Date().toISOString();
-    await saveRecord(ownerId, "job", job.id, {
-      ...job.data,
-      status: "running",
-      updatedAt,
-    });
+  if (dispatchingDevices.has(deviceId)) return;
+  dispatchingDevices.add(deviceId);
+  try {
+    const jobs = await listRecords(ownerId, "job", 1000);
+    for (const job of jobs) {
+      if (job.data.deviceId !== deviceId) continue;
+      let jobData = job.data;
+      if (jobData.status === "running") {
+        const lastUpdate = Date.parse(String(jobData.updatedAt ?? ""));
+        if (
+          Number.isFinite(lastUpdate) &&
+          Date.now() - lastUpdate < retryRunningJobsAfterMs
+        ) {
+          continue;
+        }
+        jobData = {
+          ...jobData,
+          status: "queued",
+          progress: 0,
+          updatedAt: new Date().toISOString(),
+          error: null,
+        };
+        await saveRecord(ownerId, "job", job.id, jobData);
+      }
+      if (jobData.status !== "queued") continue;
+      if (socket.readyState !== WebSocket.OPEN) return;
+
+      const updatedAt = new Date().toISOString();
+      const runningJob = { ...jobData, status: "running", updatedAt };
+      await saveRecord(ownerId, "job", job.id, runningJob);
+      if (socket.readyState !== WebSocket.OPEN) {
+        await saveRecord(ownerId, "job", job.id, {
+          ...runningJob,
+          status: "queued",
+          progress: 0,
+          updatedAt: new Date().toISOString(),
+        });
+        return;
+      }
+
+      try {
+        socket.send(
+          JSON.stringify({
+            type: "command",
+            jobId: job.id,
+            action: jobData.action,
+            payload: (jobData.payload ?? {}) as Record<string, unknown>,
+          }),
+          (error) => {
+            if (error) {
+              void saveRecord(ownerId, "job", job.id, {
+                ...runningJob,
+                status: "queued",
+                progress: 0,
+                updatedAt: new Date().toISOString(),
+              }).catch(() => undefined);
+            }
+          },
+        );
+      } catch {
+        await saveRecord(ownerId, "job", job.id, {
+          ...runningJob,
+          status: "queued",
+          progress: 0,
+          updatedAt: new Date().toISOString(),
+        });
+        return;
+      }
+    }
+  } finally {
+    dispatchingDevices.delete(deviceId);
   }
 }
 
@@ -275,6 +330,23 @@ export function attachAgonWebSockets(server: HttpServer): void {
     const previous = connections.get(deviceId);
     if (previous && previous.socket !== socket) previous.socket.close(4001, "Reconnected");
     connections.set(deviceId, { ownerId, socket });
+    let awaitingPong = false;
+    const pingTimer = setInterval(() => {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      if (awaitingPong) {
+        socket.terminate();
+        return;
+      }
+      awaitingPong = true;
+      try {
+        socket.ping();
+      } catch {
+        socket.terminate();
+      }
+    }, pingIntervalMs);
+    socket.on("pong", () => {
+      awaitingPong = false;
+    });
 
     void updateHeartbeat(ownerId, deviceId);
     void sendQueuedJobs(ownerId, deviceId, socket);
@@ -294,6 +366,7 @@ export function attachAgonWebSockets(server: HttpServer): void {
     });
 
     socket.on("close", () => {
+      clearInterval(pingTimer);
       if (connections.get(deviceId)?.socket !== socket) return;
       connections.delete(deviceId);
       void (async () => {
