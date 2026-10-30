@@ -1,7 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { initialSettings } from '../lib/data'
-import { HOSTED_CONTROL_PLANE_URL } from '../lib/utils'
 import type { AppSettings, AuditEvent, Device, Job, Platform, Relay, SupportSession, ToastMessage } from '../lib/types'
 
 interface SessionInput {
@@ -71,7 +70,7 @@ function makeHostedRelay(): Relay[] {
     name: 'Agon Hosted Relay',
     region: 'Global',
     city: 'Hosted',
-    url: HOSTED_CONTROL_PLANE_URL,
+    url: `${window.location.origin}/api/agon`,
     status: 'unchecked',
     latency: 0,
     load: 0,

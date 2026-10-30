@@ -46,4 +46,4 @@ From the workspace root, run:
 pnpm --filter @workspace/agon-control run test:relay
 ```
 
-This cross-builds the Linux agent and Windows x64 executable, checks key Windows installer guards, then runs the Linux agent against an isolated real relay through pairing, approval, WebSocket connection, and relay restart recovery. Replit validation captures each run's output for error tracking. This is not a Windows VM test: it cannot verify Windows Service Control Manager behavior without an actual Windows VM.
+This cross-builds the Linux agent and Windows x64 executable, checks the published API target and key Windows installer guards, then runs the Linux agent against an isolated real relay through pairing, approval, WebSocket connection, and relay restart recovery. Replit validation captures each run's output for error tracking. This is not a Windows VM test: it cannot verify Windows Service Control Manager behavior without an actual Windows VM.

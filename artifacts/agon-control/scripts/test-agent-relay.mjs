@@ -13,6 +13,7 @@ const agentRoot = path.join(projectRoot, 'agent');
 const relayRoot = path.join(projectRoot, 'server');
 const relayEntrypoint = path.join(relayRoot, 'server.mjs');
 const deploymentSource = path.join(projectRoot, 'src', 'pages', 'Deployment.tsx');
+const utilsSourcePath = path.join(projectRoot, 'src', 'lib', 'utils.ts');
 const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'agon-agent-relay-test-'));
 const adminToken = randomBytes(48).toString('base64url');
 const dataDir = path.join(tempRoot, 'relay-data');
@@ -145,6 +146,9 @@ try {
   assert.equal(windowsHeader.subarray(0, 2).toString('ascii'), 'MZ', 'Windows output must be a PE executable');
 
   const installerSource = await readFile(deploymentSource, 'utf8');
+  const utilsSource = await readFile(utilsSourcePath, 'utf8');
+  assert(utilsSource.includes("https://agon-server-control.replit.app/api/agon"), 'Agent package must target the published API base URL.');
+  assert(installerSource.includes('const serverUrl = HOSTED_CONTROL_PLANE_URL'), 'Installer must use the published API base URL.');
   for (const required of [
     '#Requires -RunAsAdministrator',
     '$agentExitCode = $LASTEXITCODE',
@@ -154,7 +158,7 @@ try {
   ]) {
     assert(installerSource.includes(required), `Windows installer is missing required check: ${required}`);
   }
-  console.log('PASS: Windows x64 executable cross-build and installer safety checks.');
+  console.log('PASS: Windows x64 executable, published API target, and installer safety checks.');
 
   const wsEntry = path.join(relayRoot, 'node_modules', 'ws', 'package.json');
   try {

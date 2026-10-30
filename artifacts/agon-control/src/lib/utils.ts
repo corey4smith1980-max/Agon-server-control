@@ -1,5 +1,6 @@
 import type { Platform } from './types'
 
+// The API is root-mounted; /deployment is only the console page and its Referer.
 export const HOSTED_CONTROL_PLANE_URL = 'https://agon-server-control.replit.app/api/agon'
 
 export function cn(...classes: Array<string | false | null | undefined | Record<string, boolean>>) {
