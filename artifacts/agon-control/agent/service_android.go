@@ -21,7 +21,7 @@ func installPlatform(configPath string) error {
 		return err
 	}
 	fmt.Printf("Agent installed in %s. Start it with: %s -config %s\n", base, filepath.Join(base, "agon-agent"), config)
-	fmt.Println("For boot persistence and kiosk deployment, enroll this binary through your Android MDM. No hidden persistence is configured.")
+	fmt.Println("For boot persistence and kiosk deployment, deploy this agent through your Android MDM. No hidden persistence is configured.")
 	return nil
 }
 

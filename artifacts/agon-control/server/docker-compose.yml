@@ -6,7 +6,6 @@ services:
       - "8787:8787"
     environment:
       RELAY_ID: ${RELAY_ID:-local-relay}
-      ENROLLMENT_TOKEN: ${ENROLLMENT_TOKEN:?Set ENROLLMENT_TOKEN}
       ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN}
       ALLOW_ORIGIN: ${ALLOW_ORIGIN:?Set ALLOW_ORIGIN}
       DATA_DIR: /data

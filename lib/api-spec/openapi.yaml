@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: agon
+    description: Agon device pairing and relay operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,135 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /agon/api/pair-requests:
+    post:
+      operationId: createAgonPairRequest
+      tags: [agon]
+      summary: Register a device-generated pairing request
+      parameters:
+        - in: header
+          name: X-Requested-With
+          required: true
+          schema:
+            type: string
+            const: XMLHttpRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgonPairRequestInput"
+      responses:
+        "200":
+          description: Device is already approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgonPairState"
+        "202":
+          description: Device is waiting for operator approval
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgonPairState"
+        "400":
+          description: Pairing request is invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgonError"
+        "403":
+          description: Native request marker is missing or the request was rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgonError"
+        "409":
+          description: Device identity is already in use
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgonError"
+        "429":
+          description: Pairing request limit was reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgonError"
+  /agon/pending-devices:
+    get:
+      operationId: listPendingAgonDevices
+      tags: [agon]
+      summary: List pending device approvals
+      responses:
+        "200":
+          description: Pending devices owned by the signed-in operator
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingAgonDevices"
+  /agon/pending-devices/{deviceId}/approve:
+    post:
+      operationId: approveAgonPendingDevice
+      tags: [agon]
+      summary: Approve a device pairing request
+      parameters:
+        - in: path
+          name: deviceId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgonPairApprovalInput"
+      responses:
+        "200":
+          description: Device pairing approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgonPairApproval"
+        "400":
+          description: Pairing code is invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgonError"
+        "403":
+          description: Pairing code does not match
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgonError"
+        "404":
+          description: Pending device was not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgonError"
+  /agon/pending-devices/{deviceId}:
+    delete:
+      operationId: ignoreAgonPendingDevice
+      tags: [agon]
+      summary: Ignore a pending device request
+      parameters:
+        - in: path
+          name: deviceId
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Pending request ignored
+        "404":
+          description: Pending device was not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgonError"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +164,96 @@ components:
           type: string
       required:
         - status
+    AgonPairRequestInput:
+      type: object
+      required:
+        - ownerId
+        - deviceId
+        - deviceToken
+        - pairingCode
+        - device
+      properties:
+        ownerId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        deviceId:
+          type: string
+          minLength: 1
+          maxLength: 80
+        deviceToken:
+          type: string
+          minLength: 32
+          writeOnly: true
+        pairingCode:
+          type: string
+          minLength: 16
+          maxLength: 19
+          writeOnly: true
+        allowUnattended:
+          type: boolean
+        device:
+          $ref: "#/components/schemas/AgonDeviceInfo"
+    AgonDeviceInfo:
+      type: object
+      required: [hostname, name, group, os, arch, agent, cpus, interfaces]
+      properties:
+        hostname: { type: string, maxLength: 200 }
+        name: { type: string, maxLength: 100 }
+        group: { type: string, maxLength: 80 }
+        os: { type: string, maxLength: 100 }
+        arch: { type: string, maxLength: 40 }
+        agent: { type: string, maxLength: 40 }
+        cpus: { type: integer, minimum: 0 }
+        interfaces: { type: integer, minimum: 0 }
+        bootId: { type: string }
+    AgonPairState:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [pending, approved]
+    PendingAgonDevice:
+      type: object
+      required: [id, name, hostname, group, os, arch, agent, requestedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        hostname: { type: string }
+        group: { type: string }
+        os: { type: string }
+        arch: { type: string }
+        agent: { type: string }
+        requestedAt: { type: string, format: date-time }
+    PendingAgonDevices:
+      type: object
+      required: [devices]
+      properties:
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/PendingAgonDevice"
+    AgonPairApprovalInput:
+      type: object
+      required: [pairingCode]
+      properties:
+        pairingCode:
+          type: string
+          minLength: 16
+          maxLength: 19
+          writeOnly: true
+    AgonPairApproval:
+      type: object
+      required: [deviceId, status]
+      properties:
+        deviceId: { type: string }
+        status:
+          type: string
+          const: approved
+    AgonError:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
 

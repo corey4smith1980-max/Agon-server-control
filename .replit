@@ -11,6 +11,26 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "agent-relay-smoke"
+
+[[workflows.workflow]]
+name = "agent-relay-smoke"
+author = "agent"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PORT=5173 BASE_PATH=/ pnpm --filter @workspace/agon-control run build && pnpm --filter @workspace/agon-control run test:relay && (cd artifacts/agon-control/agent && go test ./...)"
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true

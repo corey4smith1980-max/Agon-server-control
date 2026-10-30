@@ -5,7 +5,10 @@ package main
 import (
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"crypto/tls"
+	"encoding/base32"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -29,13 +32,15 @@ import (
 const agentVersion = "1.0.0"
 
 type Config struct {
-	ServerURL       string `json:"serverUrl"`
-	EnrollmentToken string `json:"enrollmentToken,omitempty"`
-	DeviceID        string `json:"deviceId,omitempty"`
-	DeviceToken     string `json:"deviceToken,omitempty"`
-	DeviceName      string `json:"deviceName"`
-	Group           string `json:"group"`
-	AllowUnattended bool   `json:"allowUnattended"`
+	ServerURL        string `json:"serverUrl"`
+	OwnerID          string `json:"ownerId"`
+	DeviceID         string `json:"deviceId,omitempty"`
+	DeviceToken      string `json:"deviceToken,omitempty"`
+	PairingCode      string `json:"pairingCode,omitempty"`
+	PairingRequested bool   `json:"pairingRequested,omitempty"`
+	DeviceName       string `json:"deviceName"`
+	Group            string `json:"group"`
+	AllowUnattended  bool   `json:"allowUnattended"`
 }
 
 type DeviceInfo struct {
@@ -79,10 +84,10 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.LUTC)
 	configPath := flag.String("config", "agent.json", "path to agent configuration")
 	server := flag.String("server", "", "control plane URL, for example https://relay.example.com")
-	enrollmentToken := flag.String("enrollment-token", "", "one-time or site enrollment token")
 	name := flag.String("name", "", "display name (defaults to hostname)")
 	group := flag.String("group", "", "device group (defaults to the configuration or Unassigned)")
 	allowUnattended := flag.Bool("allow-unattended", false, "allow administrator-approved unattended diagnostic jobs")
+	pair := flag.Bool("pair", false, "create device identity and request operator approval")
 	install := flag.Bool("install", false, "install as a visible operating system service")
 	uninstall := flag.Bool("uninstall", false, "stop and remove the operating system service")
 	consent := flag.Bool("consent", false, "confirm that you own or administer this device and consent to installation")
@@ -90,7 +95,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-fmt.Printf("Agon Agent %s (%s/%s)\n", agentVersion, runtime.GOOS, runtime.GOARCH)
+		fmt.Printf("Agon Agent %s (%s/%s)\n", agentVersion, runtime.GOOS, runtime.GOARCH)
 		return
 	}
 	if *uninstall {
@@ -100,7 +105,7 @@ fmt.Printf("Agon Agent %s (%s/%s)\n", agentVersion, runtime.GOOS, runtime.GOARCH
 		if err := uninstallPlatform(); err != nil {
 			log.Fatal(err)
 		}
-fmt.Println("Agon Agent service removed.")
+		fmt.Println("Agon Agent service removed.")
 		return
 	}
 	if *install {
@@ -110,7 +115,7 @@ fmt.Println("Agon Agent service removed.")
 		if err := installPlatform(*configPath); err != nil {
 			log.Fatal(err)
 		}
-fmt.Println("Agon Agent installed and started. Management is visible in the operating system service manager.")
+		fmt.Println("Agon Agent installed and started. Management is visible in the operating system service manager.")
 		return
 	}
 
@@ -120,9 +125,6 @@ fmt.Println("Agon Agent installed and started. Management is visible in the oper
 	}
 	if *server != "" {
 		cfg.ServerURL = *server
-	}
-	if *enrollmentToken != "" {
-		cfg.EnrollmentToken = *enrollmentToken
 	}
 	if *name != "" {
 		cfg.DeviceName = *name
@@ -140,6 +142,12 @@ fmt.Println("Agon Agent installed and started. Management is visible in the oper
 		cfg.Group = "Unassigned"
 	}
 
+	if *pair {
+		if _, err := requestPairing(&cfg, *configPath); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if handled, err := maybeRunPlatformService(*configPath, cfg); handled {
 		if err != nil {
 			log.Fatal(err)
@@ -149,7 +157,7 @@ fmt.Println("Agon Agent installed and started. Management is visible in the oper
 	if cfg.ServerURL == "" {
 		log.Fatal("server URL is required; use -server https://relay.example.com or provide agent.json")
 	}
-log.Printf("Agon Agent %s starting for %s; outbound control plane: %s", agentVersion, cfg.DeviceName, cfg.ServerURL)
+	log.Printf("Agon Agent %s starting for %s; outbound control plane: %s", agentVersion, cfg.DeviceName, cfg.ServerURL)
 	if err := runAgent(context.Background(), cfg, *configPath); err != nil {
 		log.Fatal(err)
 	}
@@ -205,52 +213,123 @@ func validateServer(raw string) error {
 	return nil
 }
 
-func enroll(cfg *Config, configPath string) error {
-	if cfg.DeviceID != "" && cfg.DeviceToken != "" {
+func ensureDeviceIdentity(cfg *Config) error {
+	if cfg.DeviceID != "" && cfg.DeviceToken != "" && cfg.PairingCode != "" {
 		return nil
 	}
-	if cfg.EnrollmentToken == "" {
-		return errors.New("device is not enrolled and enrollmentToken is missing")
+	if cfg.DeviceID == "" {
+		id := make([]byte, 16)
+		if _, err := cryptorand.Read(id); err != nil {
+			return fmt.Errorf("generate device identity: %w", err)
+		}
+		id[6] = (id[6] & 0x0f) | 0x40
+		id[8] = (id[8] & 0x3f) | 0x80
+		cfg.DeviceID = fmt.Sprintf("%x-%x-%x-%x-%x", id[0:4], id[4:6], id[6:8], id[8:10], id[10:16])
+	}
+	if cfg.DeviceToken == "" {
+		token := make([]byte, 32)
+		if _, err := cryptorand.Read(token); err != nil {
+			return fmt.Errorf("generate device credential: %w", err)
+		}
+		cfg.DeviceToken = base64.RawURLEncoding.EncodeToString(token)
+	}
+	if cfg.PairingCode == "" {
+		raw := make([]byte, 10)
+		if _, err := cryptorand.Read(raw); err != nil {
+			return fmt.Errorf("generate pairing code: %w", err)
+		}
+		cfg.PairingCode = base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw)
+	}
+	return nil
+}
+
+func hostedControlPlane(serverURL string) bool {
+	u, err := url.Parse(serverURL)
+	return err == nil && strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/api/agon")
+}
+
+func formatPairingCode(code string) string {
+	if len(code) != 16 {
+		return code
+	}
+	return strings.Join([]string{code[:4], code[4:8], code[8:12], code[12:]}, "-")
+}
+
+func setNativeRequestHeaders(req *http.Request, serverURL string) error {
+	u, err := url.Parse(serverURL)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	if hostedControlPlane(serverURL) {
+		origin := u.Scheme + "://" + u.Host
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Referer", origin+"/")
+	}
+	return nil
+}
+
+func requestPairing(cfg *Config, configPath string) (string, error) {
+	if err := ensureDeviceIdentity(cfg); err != nil {
+		return "", err
+	}
+	if cfg.OwnerID == "" && hostedControlPlane(cfg.ServerURL) {
+		return "", errors.New("ownerId is missing from agent.json; build the installer from the signed-in Agon console")
+	}
+	if err := saveConfig(configPath, *cfg); err != nil {
+		return "", fmt.Errorf("save device identity: %w", err)
 	}
 	if err := validateServer(cfg.ServerURL); err != nil {
-		return err
+		return "", err
 	}
 	base := strings.TrimRight(cfg.ServerURL, "/")
 	base = strings.Replace(base, "wss://", "https://", 1)
 	base = strings.Replace(base, "ws://", "http://", 1)
-	payload, _ := json.Marshal(map[string]any{"enrollmentToken": cfg.EnrollmentToken, "device": currentDeviceInfo(*cfg)})
-	req, err := http.NewRequest(http.MethodPost, base+"/api/enroll", bytes.NewReader(payload))
+	payload, _ := json.Marshal(map[string]any{
+		"ownerId":         cfg.OwnerID,
+		"deviceId":        cfg.DeviceID,
+		"deviceToken":     cfg.DeviceToken,
+		"pairingCode":     cfg.PairingCode,
+		"allowUnattended": cfg.AllowUnattended,
+		"device":          currentDeviceInfo(*cfg),
+	})
+	req, err := http.NewRequest(http.MethodPost, base+"/api/pair-requests", bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	if err := setNativeRequestHeaders(req, cfg.ServerURL); err != nil {
+		return "", err
+	}
 	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
 	if err != nil {
-		return fmt.Errorf("enrollment request: %w", err)
+		return "", fmt.Errorf("device pairing request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("enrollment failed (%s): %s", resp.Status, strings.TrimSpace(string(body)))
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		return "", fmt.Errorf("device pairing request failed (%s): %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	var result struct {
-		DeviceID    string `json:"deviceId"`
-		DeviceToken string `json:"deviceToken"`
+		Status string `json:"status"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return err
+		return "", err
 	}
-	if result.DeviceID == "" || result.DeviceToken == "" {
-		return errors.New("enrollment response was incomplete")
+	if result.Status != "pending" && result.Status != "approved" {
+		return "", errors.New("device pairing response was incomplete")
 	}
-	cfg.DeviceID, cfg.DeviceToken = result.DeviceID, result.DeviceToken
-	cfg.EnrollmentToken = ""
+	if result.Status == "approved" {
+		cfg.PairingCode = ""
+	}
+	cfg.PairingRequested = true
 	if err := saveConfig(configPath, *cfg); err != nil {
-		return fmt.Errorf("save device credentials: %w", err)
+		return "", fmt.Errorf("save device identity: %w", err)
 	}
-	log.Printf("enrolled as device %s", cfg.DeviceID)
-	return nil
+	if result.Status == "pending" && cfg.PairingCode != "" {
+		fmt.Printf("Device %s is waiting for operator approval.\nPairing code: %s\n", cfg.DeviceName, formatPairingCode(cfg.PairingCode))
+	}
+	return result.Status, nil
 }
 
 func runAgent(ctx context.Context, cfg Config, configPath string) error {
@@ -260,21 +339,34 @@ func runAgent(ctx context.Context, cfg Config, configPath string) error {
 	backoff := time.Second
 	for {
 		connectionStarted := time.Time{}
-		if err := enroll(&cfg, configPath); err != nil {
-			log.Printf("enrollment: %v", err)
-		} else {
+		newIdentity := cfg.DeviceID == "" || cfg.DeviceToken == ""
+		if cfg.DeviceID == "" || cfg.DeviceToken == "" {
+			if err := ensureDeviceIdentity(&cfg); err != nil {
+				return err
+			}
+		}
+		if !cfg.PairingRequested && (newIdentity || cfg.OwnerID != "") {
+			if _, err := requestPairing(&cfg, configPath); err != nil {
+				log.Printf("device pairing: %v", err)
+				goto retry
+			}
+		}
+		{
 			connectionStarted = time.Now()
-			err := runConnection(ctx, cfg)
+			err := runConnection(ctx, &cfg, configPath)
 			if ctx.Err() != nil {
 				return nil
 			}
-			if err != nil {
+			if errors.Is(err, errAwaitingApproval) {
+				log.Printf("relay: waiting for an operator to approve device %s", cfg.DeviceID)
+			} else if err != nil {
 				log.Printf("connection: %v", err)
 			}
 			if time.Since(connectionStarted) >= 30*time.Second {
 				backoff = time.Second
 			}
 		}
+	retry:
 		retryDelay := backoff
 		if backoff > time.Second {
 			retryDelay += time.Duration(rand.Int63n(int64(backoff / 4)))
@@ -293,7 +385,12 @@ func runAgent(ctx context.Context, cfg Config, configPath string) error {
 	}
 }
 
-func runConnection(ctx context.Context, cfg Config) error {
+var errAwaitingApproval = errors.New("device is waiting for operator approval")
+
+func runConnection(ctx context.Context, cfg *Config, configPath string) error {
+	if err := validateServer(cfg.ServerURL); err != nil {
+		return err
+	}
 	u, err := url.Parse(strings.TrimRight(cfg.ServerURL, "/"))
 	if err != nil {
 		return err
@@ -314,8 +411,14 @@ func runConnection(ctx context.Context, cfg Config) error {
 	dialer := websocket.Dialer{HandshakeTimeout: 15 * time.Second, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+cfg.DeviceToken)
-	conn, _, err := dialer.DialContext(ctx, u.String(), headers)
+	if err := setNativeRequestHeaders(&http.Request{Header: headers}, cfg.ServerURL); err != nil {
+		return err
+	}
+	conn, handshake, err := dialer.DialContext(ctx, u.String(), headers)
 	if err != nil {
+		if handshake != nil && handshake.StatusCode == http.StatusUnauthorized {
+			return errAwaitingApproval
+		}
 		return err
 	}
 	defer conn.Close()
@@ -328,9 +431,15 @@ func runConnection(ctx context.Context, cfg Config) error {
 		return conn.SetReadDeadline(time.Now().Add(pongWait))
 	})
 	client := &socketClient{conn: conn}
-	info := currentDeviceInfo(cfg)
+	info := currentDeviceInfo(*cfg)
 	if err := client.send(Envelope{Type: "hello", Device: &info}); err != nil {
 		return err
+	}
+	if cfg.PairingCode != "" {
+		cfg.PairingCode = ""
+		if err := saveConfig(configPath, *cfg); err != nil {
+			log.Printf("could not clear pairing code from config: %v", err)
+		}
 	}
 	log.Printf("connected to relay; device=%s", cfg.DeviceID)
 
@@ -348,7 +457,7 @@ func runConnection(ctx context.Context, cfg Config) error {
 			case <-connectionCtx.Done():
 				return
 			case <-ticker.C:
-				current := currentDeviceInfo(cfg)
+				current := currentDeviceInfo(*cfg)
 				if err := client.send(Envelope{Type: "heartbeat", Device: &current}); err != nil {
 					cancel()
 					return
@@ -363,7 +472,7 @@ func runConnection(ctx context.Context, cfg Config) error {
 			return err
 		}
 		if message.Type == "command" {
-			result, commandErr := executeAllowlisted(message.Action, cfg)
+			result, commandErr := executeAllowlisted(message.Action, *cfg)
 			response := Envelope{Type: "command_result", JobID: message.JobID, Action: message.Action, Result: result}
 			if commandErr != nil {
 				response.Error = commandErr.Error()
@@ -432,7 +541,7 @@ func prepareInstalledFiles(configPath, executableDir, settingsDir string) (strin
 	if err != nil {
 		return "", "", err
 	}
-binaryName := "agon-agent"
+	binaryName := "agon-agent"
 	if runtime.GOOS == "windows" {
 		binaryName += ".exe"
 	}

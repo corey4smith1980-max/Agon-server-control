@@ -38,10 +38,10 @@ Agon is a web console for explicitly managed endpoint inventory, support-policy 
 
 ## Product
 
-- View lab sample devices and synchronize real enrolled devices, jobs, support requests, and relay audit records.
+- View lab sample devices and synchronize real approved devices, jobs, support requests, and relay audit records.
 - Request only endpoint-consent or endpoint-policy status; support requests do not open a remote-control session.
 - Build checksummed, configured endpoint packages for Windows, macOS, Linux, and Android ARM64.
-- Run a private operator console using a self-hosted relay, separate enrollment/admin tokens, and an exact allowed browser origin.
+- Run the operator console with the Replit-hosted Agon WebSocket relay; the optional standalone relay uses an admin token and exact allowed browser origin.
 
 ## User preferences
 
@@ -50,8 +50,9 @@ The console currently uses a shared relay administrator bearer token kept in bro
 ## Gotchas
 
 - `ALLOW_ORIGIN` must exactly match the published console origin; use HTTPS outside localhost development.
-- Configure separate random `ENROLLMENT_TOKEN` and `ADMIN_TOKEN` values of at least 32 characters before starting the relay.
-- Native installers include the enrollment token. Distribute packages through an approved secure channel and rotate the enrollment token after enrollment if the policy allows.
+- Configure a random `ADMIN_TOKEN` of at least 32 characters before starting the optional standalone relay.
+- Native agents generate their own device identity and credential. Operators approve a device using the pairing code printed during installation; installers do not contain a relay-wide device secret.
+- Replit deployments do not expose the arbitrary inbound TCP/UDP ports used by the native RustDesk relay protocol. Do not describe the hosted Agon WebSocket relay as RustDesk-client compatible.
 - Downloadable native binaries and ZIP bundles are generated in ignored build output; do not commit build artifacts.
 
 ## Pointers

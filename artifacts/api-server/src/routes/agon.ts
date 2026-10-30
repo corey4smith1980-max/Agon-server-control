@@ -1,8 +1,17 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { Router, type RequestHandler } from "express";
 import { getAuth } from "@clerk/express";
+import {
+  ApproveAgonPendingDeviceBody,
+  ApproveAgonPendingDeviceParams,
+  ApproveAgonPendingDeviceResponse,
+  CreateAgonPairRequestBody,
+  CreateAgonPairRequestResponse,
+  IgnoreAgonPendingDeviceParams,
+  ListPendingAgonDevicesResponse,
+} from "@workspace/api-zod";
 import { pool } from "@workspace/db";
-import { addAudit, createRecord, getRecord, listRecords } from "../lib/agonStore";
+import { addAudit, createRecord, getRecord, getRecordById, listRecords } from "../lib/agonStore";
 import { disconnectAgonDevice, queueAgonCommand } from "../lib/agonWebSocket";
 
 const router = Router();
@@ -36,21 +45,41 @@ function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function getConsoleOrigin(originHeader: string | undefined): string | null {
-  if (!originHeader) return null;
-  try {
-    const url = new URL(originHeader);
-    if (
-      url.origin !== originHeader ||
-      (url.protocol !== "https:" &&
-        !["localhost", "127.0.0.1"].includes(url.hostname))
-    ) {
-      return null;
-    }
-    return url.origin;
-  } catch {
-    return null;
+function normalizedPairingCode(value: unknown): string {
+  return typeof value === "string"
+    ? value.toUpperCase().replace(/[^A-Z2-7]/g, "")
+    : "";
+}
+
+function hashesMatch(expected: unknown, received: string): boolean {
+  if (typeof expected !== "string" || expected.length !== 64) return false;
+  const expectedBytes = Buffer.from(expected, "hex");
+  const receivedBytes = Buffer.from(received, "hex");
+  return expectedBytes.length === receivedBytes.length &&
+    timingSafeEqual(expectedBytes, receivedBytes);
+}
+
+const pairRequestWindows = new Map<string, { startedAt: number; count: number }>();
+
+function allowPairRequest(key: string): boolean {
+  const now = Date.now();
+  const current = pairRequestWindows.get(key);
+  if (!current || now - current.startedAt >= 10 * 60 * 1000) {
+    pairRequestWindows.set(key, { startedAt: now, count: 1 });
+    return true;
   }
+  if (current.count >= 12) return false;
+  current.count += 1;
+  if (pairRequestWindows.size > 5000) {
+    for (const [entry, window] of pairRequestWindows) {
+      if (now - window.startedAt >= 10 * 60 * 1000) pairRequestWindows.delete(entry);
+    }
+  }
+  return true;
+}
+
+function isNativeAgentRequest(request: Parameters<RequestHandler>[0]): boolean {
+  return request.get("X-Requested-With") === "XMLHttpRequest";
 }
 
 router.get("/health", (_request, response) => {
@@ -63,144 +92,176 @@ router.get("/health", (_request, response) => {
   });
 });
 
-// Each configured installer receives one short-lived enrollment token. The
-// plaintext is returned once to the signed-in operator and only its hash is stored.
-router.post("/enrollment-tokens", requireOperator, async (request, response) => {
-  const id = randomUUID();
-  const token = randomBytes(32).toString("base64url");
-  const deviceName = cleanText(request.body?.deviceName, 100, "Agon managed device");
-  const deviceGroup = cleanText(request.body?.group, 80, "Unassigned");
-  const allowUnattended = request.body?.allowUnattended === true;
-  const origin = getConsoleOrigin(request.get("origin"));
-  if (!origin) {
-    response.status(400).json({ error: "Could not determine the secure console origin." });
+// Devices create their own identity. Operators must verify the endpoint's
+// pairing code before its credential is activated for the relay.
+router.post("/api/pair-requests", async (request, response) => {
+  if (!isNativeAgentRequest(request)) {
+    response.status(403).json({ error: "Expected X-Requested-With header." });
+    return;
+  }
+  const parsedBody = CreateAgonPairRequestBody.safeParse(request.body);
+  if (!parsedBody.success) {
+    response.status(400).json({ error: "Device pairing data is invalid." });
+    return;
+  }
+  const input = parsedBody.data;
+  const owner = cleanText(input.ownerId, 128);
+  const deviceId = cleanText(input.deviceId, 80);
+  const deviceToken = cleanText(input.deviceToken, 256);
+  const pairingCode = normalizedPairingCode(input.pairingCode);
+  const deviceInfo = input.device;
+  if (pairingCode.length !== 16) {
+    response.status(400).json({ error: "Device pairing code is invalid." });
     return;
   }
 
-  const owner = ownerId(response);
-  const recent = await pool.query<{ count: string }>(
+  const tokenHash = hashToken(deviceToken);
+  const pairingCodeHash = hashToken(pairingCode);
+  const active = await getRecordById("device", deviceId);
+  if (active) {
+    if (active.ownerId !== owner || !hashesMatch(active.data.tokenHash, tokenHash)) {
+      response.status(409).json({ error: "This device identity is already in use." });
+      return;
+    }
+    response.status(200).json(CreateAgonPairRequestResponse.parse({ status: "approved" }));
+    return;
+  }
+
+  const rejected = await getRecordById("rejected_device", deviceId);
+  if (rejected) {
+    response.status(403).json({ error: "This device pairing request was rejected." });
+    return;
+  }
+
+  const pending = await getRecordById("pending_device", deviceId);
+  if (pending) {
+    if (
+      pending.ownerId !== owner ||
+      !hashesMatch(pending.data.tokenHash, tokenHash) ||
+      !hashesMatch(pending.data.pairingCodeHash, pairingCodeHash)
+    ) {
+      response.status(409).json({ error: "This device identity is already in use." });
+      return;
+    }
+    response.status(202).json(CreateAgonPairRequestResponse.parse({ status: "pending" }));
+    return;
+  }
+
+  if (!allowPairRequest(`${request.ip || "unknown"}:${owner}`)) {
+    response.status(429).json({ error: "Too many new device pairing requests. Try again later." });
+    return;
+  }
+
+  const pendingCount = await pool.query<{ count: string }>(
     `SELECT COUNT(*)::text AS count
-     FROM agon_enrollment_tokens
-     WHERE owner_id = $1 AND created_at > NOW() - INTERVAL '1 hour'`,
+     FROM agon_records
+     WHERE owner_id = $1 AND kind = 'pending_device'
+       AND created_at > NOW() - INTERVAL '24 hours'`,
     [owner],
   );
-  if (Number(recent.rows[0]?.count ?? 0) >= 20) {
-    response.status(429).json({ error: "Installer limit reached. Try again later." });
+  if (Number(pendingCount.rows[0]?.count ?? 0) >= 50) {
+    response.status(429).json({ error: "This account has too many unapproved devices." });
     return;
   }
 
-  await pool.query(
-    `INSERT INTO agon_enrollment_tokens
-       (id, owner_id, token_hash, device_name, device_group, allow_unattended, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NOW() + INTERVAL '24 hours')`,
-    [id, owner, hashToken(token), deviceName, deviceGroup, allowUnattended],
-  );
-  await addAudit(owner, "installer.credential.created", {
-    group: deviceGroup,
-    expiresInHours: 24,
-    useLimit: 1,
-  });
-
-  response.status(201).json({
-    serverUrl: `${origin}/api/agon`,
-    enrollmentToken: token,
-    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    useLimit: 1,
-  });
+  const hostname = cleanText(deviceInfo.hostname, 200, "Unknown device");
+  const deviceName = cleanText(deviceInfo.name, 100, hostname) || hostname;
+  await createRecord(owner, "pending_device", {
+    name: deviceName,
+    hostname,
+    group: cleanText(deviceInfo.group, 80, "Unassigned"),
+    os: cleanText(deviceInfo.os, 100),
+    arch: cleanText(deviceInfo.arch, 40),
+    agent: cleanText(deviceInfo.agent, 40, "1.0.0"),
+    cpus: Number.isFinite(deviceInfo.cpus) ? deviceInfo.cpus : 0,
+    interfaces: Number.isFinite(deviceInfo.interfaces) ? deviceInfo.interfaces : 0,
+    tokenHash,
+    pairingCodeHash,
+    relayId: "agon-hosted",
+    online: false,
+    allowUnattended: input.allowUnattended === true,
+    requestedAt: new Date().toISOString(),
+  }, deviceId);
+  await addAudit(owner, "device.pairing.requested", {
+    deviceId,
+    name: deviceName,
+  }, "info", "Agon Agent");
+  response.status(202).json(CreateAgonPairRequestResponse.parse({ status: "pending" }));
 });
 
-// Agent enrollment is unauthenticated by design; each installer carries a
-// one-use token bound to the signed-in operator who generated it.
-router.post("/api/enroll", async (request, response) => {
-  const token = cleanText(request.body?.enrollmentToken, 256);
-  const deviceInfo = request.body?.device;
-  if (!token || !deviceInfo || typeof deviceInfo !== "object") {
-    response.status(400).json({ error: "Installer enrollment data is incomplete." });
+router.use(requireOperator);
+
+router.get("/pending-devices", async (_request, response) => {
+  const pending = await listRecords(ownerId(response), "pending_device", 100);
+  response.setHeader("Cache-Control", "no-store");
+  response.json(ListPendingAgonDevicesResponse.parse({
+    devices: pending
+      .map(({ id, data, createdAt }) => ({
+        id,
+        name: data.name,
+        hostname: data.hostname,
+        group: data.group,
+        os: data.os,
+        arch: data.arch,
+        agent: data.agent,
+        requestedAt: data.requestedAt ?? createdAt.toISOString(),
+      })),
+  }));
+});
+
+router.post("/pending-devices/:deviceId/approve", async (request, response) => {
+  const owner = ownerId(response);
+  const parsedParams = ApproveAgonPendingDeviceParams.safeParse(request.params);
+  const parsedBody = ApproveAgonPendingDeviceBody.safeParse(request.body);
+  if (!parsedParams.success || !parsedBody.success) {
+    response.status(400).json({ error: "Pairing approval data is invalid." });
+    return;
+  }
+  const deviceId = cleanText(parsedParams.data.deviceId, 80);
+  const pairingCode = normalizedPairingCode(parsedBody.data.pairingCode);
+  if (!deviceId || pairingCode.length !== 16) {
+    response.status(400).json({ error: "Enter the pairing code shown by the endpoint installer." });
     return;
   }
 
   const client = await pool.connect();
-  let created:
-    | { deviceId: string; ownerId: string; deviceToken: string; deviceName: string }
-    | undefined;
+  let approvedName = "";
   try {
     await client.query("BEGIN");
-    const tokenResult = await client.query<{
-      id: string;
-      owner_id: string;
-      device_name: string;
-      device_group: string;
-      allow_unattended: boolean;
-    }>(
-      `SELECT id, owner_id, device_name, device_group, allow_unattended
-       FROM agon_enrollment_tokens
-       WHERE token_hash = $1
-         AND used_at IS NULL
-         AND expires_at > NOW()
+    const result = await client.query<{ data: Record<string, unknown> }>(
+      `SELECT data
+       FROM agon_records
+       WHERE id = $1 AND owner_id = $2 AND kind = 'pending_device'
        FOR UPDATE`,
-      [hashToken(token)],
+      [deviceId, owner],
     );
-    const enrollment = tokenResult.rows[0];
-    if (!enrollment) {
+    const pending = result.rows[0]?.data;
+    if (!pending) {
       await client.query("ROLLBACK");
-      response.status(403).json({ error: "This installer token is invalid, expired, or already used." });
+      response.status(404).json({ error: "Pending device not found." });
+      return;
+    }
+    if (!hashesMatch(pending.pairingCodeHash, hashToken(pairingCode))) {
+      await client.query("ROLLBACK");
+      response.status(403).json({ error: "Pairing code does not match this endpoint." });
       return;
     }
 
-    const id = randomUUID();
-    const deviceToken = randomBytes(32).toString("base64url");
-    const hostname = cleanText(deviceInfo.hostname, 200, "Unknown device");
-    const deviceName = cleanText(deviceInfo.name, 100, enrollment.device_name) || hostname;
-    const data = {
-      name: deviceName,
-      hostname,
-      group: cleanText(deviceInfo.group, 80, enrollment.device_group) || enrollment.device_group,
-      os: cleanText(deviceInfo.os, 100),
-      arch: cleanText(deviceInfo.arch, 40),
-      agent: cleanText(deviceInfo.agent, 40, "1.0.0"),
-      cpus: Number.isFinite(deviceInfo.cpus) ? deviceInfo.cpus : 0,
-      interfaces: Number.isFinite(deviceInfo.interfaces) ? deviceInfo.interfaces : 0,
-      tokenHash: hashToken(deviceToken),
-      relayId: "agon-hosted",
+    const { pairingCodeHash: _pairingCodeHash, ...deviceData } = pending;
+    approvedName = String(deviceData.name ?? "Agon managed device");
+    const activeDevice = {
+      ...deviceData,
       online: false,
-      enrolledAt: new Date().toISOString(),
+      pairedAt: new Date().toISOString(),
       lastSeen: null,
-      allowUnattended: enrollment.allow_unattended,
     };
-
     await client.query(
-      `UPDATE agon_enrollment_tokens SET used_at = NOW() WHERE id = $1`,
-      [enrollment.id],
-    );
-    await client.query(
-      `INSERT INTO agon_records (id, owner_id, kind, data)
-       VALUES ($1, $2, 'device', $3::jsonb)`,
-      [id, enrollment.owner_id, JSON.stringify(data)],
-    );
-    const auditId = randomUUID();
-    await client.query(
-      `INSERT INTO agon_records (id, owner_id, kind, data)
-       VALUES ($1, $2, 'audit', $3::jsonb)`,
-      [
-        auditId,
-        enrollment.owner_id,
-        JSON.stringify({
-          at: new Date().toISOString(),
-          action: "device.enrolled",
-          actor: "Agon Agent",
-          detail: { deviceId: id, name: deviceName },
-          severity: "success",
-          relayId: "agon-hosted",
-        }),
-      ],
+      `UPDATE agon_records
+       SET kind = 'device', data = $3::jsonb, updated_at = NOW()
+       WHERE id = $1 AND owner_id = $2 AND kind = 'pending_device'`,
+      [deviceId, owner, JSON.stringify(activeDevice)],
     );
     await client.query("COMMIT");
-    created = {
-      deviceId: id,
-      ownerId: enrollment.owner_id,
-      deviceToken,
-      deviceName,
-    };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     throw error;
@@ -208,14 +269,39 @@ router.post("/api/enroll", async (request, response) => {
     client.release();
   }
 
-  response.status(200).json({
-    deviceId: created!.deviceId,
-    deviceToken: created!.deviceToken,
-    relayId: "agon-hosted",
-  });
+  disconnectAgonDevice(deviceId);
+  await addAudit(owner, "device.pairing.approved", { deviceId, name: approvedName }, "success");
+  response.json(ApproveAgonPendingDeviceResponse.parse({ deviceId, status: "approved" }));
 });
 
-router.use(requireOperator);
+router.delete("/pending-devices/:deviceId", async (request, response) => {
+  const owner = ownerId(response);
+  const parsedParams = IgnoreAgonPendingDeviceParams.safeParse(request.params);
+  if (!parsedParams.success) {
+    response.status(400).json({ error: "Device ID is invalid." });
+    return;
+  }
+  const deviceId = cleanText(parsedParams.data.deviceId, 80);
+  const result = await pool.query<{ data: Record<string, unknown> }>(
+    `UPDATE agon_records
+     SET kind = 'rejected_device',
+         data = data - 'pairingCodeHash',
+         updated_at = NOW()
+     WHERE id = $1 AND owner_id = $2 AND kind = 'pending_device'
+     RETURNING data`,
+    [deviceId, owner],
+  );
+  const rejected = result.rows[0];
+  if (!rejected) {
+    response.status(404).json({ error: "Pending device not found." });
+    return;
+  }
+  await addAudit(owner, "device.pairing.rejected", {
+    deviceId,
+    name: rejected.data.name,
+  }, "warning");
+  response.status(204).end();
+});
 
 router.get("/devices", async (_request, response) => {
   const devices = await listRecords(ownerId(response), "device", 1000);
@@ -241,7 +327,7 @@ router.delete("/devices/:deviceId", async (request, response) => {
     return;
   }
   disconnectAgonDevice(request.params.deviceId);
-  await addAudit(owner, "device.enrollment.revoked", {
+  await addAudit(owner, "device.access.revoked", {
     deviceId: request.params.deviceId,
   });
   response.status(204).end();

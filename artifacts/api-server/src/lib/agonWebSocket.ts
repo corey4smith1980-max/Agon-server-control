@@ -279,7 +279,7 @@ export function disconnectAgonDevice(deviceId: string): void {
   const connection = connections.get(deviceId);
   if (!connection) return;
   connections.delete(deviceId);
-  connection.socket.close(4003, "Device enrollment revoked");
+  connection.socket.close(4003, "Device access revoked");
 }
 
 function rejectUpgrade(socket: Duplex, status: number): void {

@@ -6,6 +6,7 @@ import type { Platform } from '../lib/types'
 import { artifactPath, cn, copyText, formatBytes, platformLabel } from '../lib/utils'
 import { useAppStore } from '../store/AppStore'
 import { Badge, Button, DetailRow, PageHeader, Panel, Toggle } from '../components/UI'
+import { PendingPairingApprovals } from '../components/PendingPairingApprovals'
 
 interface Artifact { platform: string; arch: string; file: string; bytes: number; sha256: string; version: string }
 
@@ -40,6 +41,12 @@ Write-Host "Installing Agon Agent as a visible Windows service..." -ForegroundCo
  $priorNativeErrorPreference = $PSNativeCommandUseErrorActionPreference
 $PSNativeCommandUseErrorActionPreference = $false
 try {
+  $pairOutput = & $Agent -config $Config -pair 2>&1
+  $pairExitCode = $LASTEXITCODE
+  if ($pairOutput) { $pairOutput | ForEach-Object { Write-Host $_ } }
+  if ($pairExitCode -ne 0) {
+    throw "Device pairing request failed with exit code $pairExitCode. Confirm network access, then rerun install.ps1."
+  }
   $agentOutput = & $Agent -config $Config -install -consent 2>&1
   $agentExitCode = $LASTEXITCODE
 } finally {
@@ -77,6 +84,7 @@ PKG_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 chmod +x "$PKG_DIR/agon-agent"
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
 echo "Installing Agon Agent for ${platform === 'macos' ? 'macOS (LaunchDaemon)' : 'Linux (systemd)'}..."
+"$PKG_DIR/agon-agent" -config "$PKG_DIR/agent.json" -pair
 $SUDO "$PKG_DIR/agon-agent" -config "$PKG_DIR/agent.json" -install -consent
 echo "Installation complete. The service is visible in your operating system service manager."
 `
@@ -103,6 +111,7 @@ adb push "$PKG_DIR/agon-agent" /data/local/tmp/agon-agent/agon-agent
 adb push "$PKG_DIR/agent.json" /data/local/tmp/agon-agent/agent.json
 adb shell chmod 700 /data/local/tmp/agon-agent/agon-agent
 adb shell chmod 600 /data/local/tmp/agon-agent/agent.json
+adb shell "cd /data/local/tmp/agon-agent && ./agon-agent -config agent.json -pair"
 adb shell "cd /data/local/tmp/agon-agent && nohup ./agon-agent -config agent.json > agent.log 2>&1 &"
 echo "Agent started. Inspect with: adb shell tail -f /data/local/tmp/agon-agent/agent.log"
 echo "For boot persistence, deploy explicitly through your MDM. This package does not hide or bypass Android controls."
@@ -116,7 +125,7 @@ async function sha256(value: string | ArrayBuffer) {
 }
 
 export default function Deployment() {
-  const { settings, addAudit, toast } = useAppStore()
+  const { settings, addAudit, toast, userId } = useAppStore()
   const [platform, setPlatform] = useState<Platform>('windows')
   const [arch, setArch] = useState('amd64')
   const [group, setGroup] = useState(settings.defaultGroup)
@@ -154,28 +163,10 @@ export default function Deployment() {
       const binary = await response.arrayBuffer()
       const binaryHash = await sha256(binary)
       if (binaryHash !== currentArtifact.sha256) throw new Error('Agent checksum mismatch. Package generation stopped.')
-      setProgress(24); setStage('Issuing one-time installer enrollment')
-      const enrollmentResponse = await fetch('/api/agon/enrollment-tokens', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deviceName: 'Agon managed device',
-          group,
-          allowUnattended: access === 'unattended',
-        }),
-      })
-      const enrollment = await enrollmentResponse.json()
-      if (!enrollmentResponse.ok) {
-        throw new Error(enrollment.error || 'Could not issue an installer credential')
-      }
-      const serverUrl = String(enrollment.serverUrl)
-      const enrollmentToken = String(enrollment.enrollmentToken)
-      if (!serverUrl.startsWith('https://') || !enrollmentToken) {
-        throw new Error('The hosted control plane returned an invalid installer configuration')
-      }
-      setProgress(31); setStage('Writing enrollment and endpoint policy')
-      const config = JSON.stringify({ serverUrl, enrollmentToken, deviceName: '', group, allowUnattended: access === 'unattended' }, null, 2) + '\n'
+      setProgress(24); setStage('Preparing relay and device policy')
+      if (!userId) throw new Error('Could not determine the signed-in operator account.')
+      const serverUrl = `${window.location.origin}/api/agon`
+      const config = JSON.stringify({ serverUrl, ownerId: userId, deviceName: '', group, allowUnattended: access === 'unattended' }, null, 2) + '\n'
       const configHash = await sha256(config)
       const zip = new JSZip()
       const binaryName = platform === 'windows' ? 'agon-agent.exe' : 'agon-agent'
@@ -187,13 +178,13 @@ export default function Deployment() {
       else { scripts['install.sh'] = unixInstaller(platform); scripts['uninstall.sh'] = unixUninstaller(platform) }
       Object.entries(scripts).forEach(([name, content]) => zip.file(name, content, { unixPermissions: name.endsWith('.sh') ? 0o755 : undefined }))
       const instructions = platform === 'windows'
-        ? '1. Extract this ZIP on the managed Windows device.\n2. Right-click install.ps1 and choose Run with PowerShell as administrator.\n3. If your policy blocks scripts, run: powershell -ExecutionPolicy Bypass -File .\\install.ps1\n4. Confirm AgonAgent is running in services.msc.\n\nThe agent requires explicit consent and does not install silently.'
+        ? '1. Extract this ZIP on the managed Windows device.\n2. Run the saved install.ps1 file as administrator.\n3. Copy the pairing code printed by the installer.\n4. Enter that code in Agon Control → Pending pairing approvals.\n5. Confirm AgonAgent is running in services.msc.\n\nThe agent requires explicit consent and does not install silently.'
         : platform === 'android'
-          ? '1. Enable Android debugging through your approved MDM or device administrator workflow.\n2. Connect the device and run: sh install-android.sh\n3. Verify the agent in the console after it enrolls.\n\nThis ARM64 package uses ADB. It is not an APK and does not bypass Android security. Boot persistence requires explicit MDM provisioning.'
-          : `1. Extract this ZIP on the managed ${platformLabel(platform)} device.\n2. Open Terminal in the extracted folder.\n3. Run: sh install.sh\n4. Approve the administrator prompt and verify the service in the console.\n\nThe service and configuration paths are printed by the installer.`
+          ? '1. Enable Android debugging through your approved MDM or device administrator workflow.\n2. Connect the device and run: sh install-android.sh\n3. Copy the pairing code printed by the installer.\n4. Enter that code in Agon Control → Pending pairing approvals.\n\nThis ARM64 package uses ADB. It is not an APK and does not bypass Android security. Boot persistence requires explicit MDM provisioning.'
+          : `1. Extract this ZIP on the managed ${platformLabel(platform)} device.\n2. Open Terminal in the extracted folder.\n3. Run: sh install.sh\n4. Copy the pairing code printed by the installer.\n5. Enter that code in Agon Control → Pending pairing approvals.\n\nThe service and configuration paths are printed by the installer.`
       zip.file('INSTALL.txt', `Agon Agent 1.0.0\n${platformLabel(platform)} ${arch}\n\n${instructions}\n`)
       zip.file('SHA256SUMS', `${binaryHash}  ${binaryName}\n${configHash}  agent.json\n`)
-      zip.file('BUILD-RECEIPT.json', JSON.stringify({ product: 'Agon Agent', version: '1.0.0', platform, architecture: arch, builtAt: new Date().toISOString(), serverUrl, group, access, enrollmentExpiresAt: enrollment.expiresAt, enrollmentUseLimit: enrollment.useLimit, artifactSha256: binaryHash, enrollmentTokenSha256: await sha256(enrollmentToken), capabilities: ['enrollment', 'heartbeat', 'inventory.refresh', 'agent.ping', 'diagnostics.network', 'session.request'], excluded: ['arbitrary-shell', 'credential-collection', 'covert-persistence'] }, null, 2))
+      zip.file('BUILD-RECEIPT.json', JSON.stringify({ product: 'Agon Agent', version: '1.0.0', platform, architecture: arch, builtAt: new Date().toISOString(), serverUrl, group, access, identity: 'device-generated', authorization: 'operator-approved-pairing-code', artifactSha256: binaryHash, capabilities: ['device-pairing', 'heartbeat', 'inventory.refresh', 'agent.ping', 'diagnostics.network', 'session.request'], excluded: ['arbitrary-shell', 'credential-collection', 'covert-persistence'] }, null, 2))
       setProgress(38); setStage('Compressing installer package')
       const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } }, (metadata) => { setProgress(38 + metadata.percent * .57); setStage(`Compressing ${metadata.currentFile || 'package'}`) })
       const name = `agon-${platform}-${arch}-v1.0.0.zip`
@@ -215,16 +206,17 @@ export default function Deployment() {
   const copy = async (value: string, label: string) => { await copyText(value); toast(`${label} copied`) }
   return <div>
     <PageHeader eyebrow="Real artifacts · Agent v1.0.0" title="Agent deployment" description="Download native binaries or build a configured installer around checksum-verified agents. Installation requires administrator consent." actions={<><Button icon={Download} onClick={() => { const anchor = document.createElement('a'); anchor.href = artifactPath('downloads/agon-agent-builds.zip'); anchor.download = ''; anchor.click() }}>Agent builds ZIP</Button><Button icon={Code2} onClick={() => { const anchor = document.createElement('a'); anchor.href = artifactPath('downloads/agon-agent-source.zip'); anchor.download = ''; anchor.click() }}>Agent source</Button></>} />
+    <PendingPairingApprovals />
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,.8fr)]">
       <div className="space-y-4">
         <Panel className="p-5 sm:p-6">
           <div className="flex items-center justify-between"><div><span className="eyebrow">01 · Target</span><h2 className="mt-2 font-display text-base font-semibold text-white">Choose an operating system</h2></div><Badge tone="green" dot>Native builds ready</Badge></div>
           <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{(Object.keys(platformMeta) as Platform[]).map((item) => { const meta = platformMeta[item]; const selected = platform === item; return <button key={item} onClick={() => choosePlatform(item)} className={cn('relative rounded-2xl border p-4 text-left transition-all duration-300', selected ? 'border-lime-300/35 bg-lime-300/[0.055] shadow-[0_0_30px_rgba(195,243,107,.035)]' : 'border-white/[0.07] bg-white/[0.018] hover:border-white/[0.14] hover:bg-white/[0.035]')}><div className="flex items-center justify-between"><meta.icon size={21} className={selected ? 'text-lime-300' : 'text-slate-500'} />{selected && <motion.div layoutId="platform-check" className="rounded-full bg-lime-300 p-0.5 text-[#15200c]"><Check size={11}/></motion.div>}</div><p className="mt-4 text-sm font-medium text-white">{meta.title}</p><p className="mt-1 text-[10px] text-slate-500">{meta.subtitle}</p></button>})}</div>
-          <div className="mt-5 grid gap-4 sm:grid-cols-2"><div><label className="label" htmlFor="deploy-arch">Processor architecture</label><select id="deploy-arch" className="input" value={arch} onChange={(event) => { setArch(event.target.value); setPackageInfo(null) }}>{platformMeta[platform].arches.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></div><div><label className="label" htmlFor="deploy-group">Enrollment group</label><select id="deploy-group" className="input" value={group} onChange={(event) => setGroup(event.target.value)}>{['Unassigned', 'Infrastructure', 'Engineering', 'People', 'Sales', 'Marketing', 'Executive', 'Retail', 'Field Ops', 'Finance'].map((item) => <option key={item}>{item}</option>)}</select></div></div>
+          <div className="mt-5 grid gap-4 sm:grid-cols-2"><div><label className="label" htmlFor="deploy-arch">Processor architecture</label><select id="deploy-arch" className="input" value={arch} onChange={(event) => { setArch(event.target.value); setPackageInfo(null) }}>{platformMeta[platform].arches.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></div><div><label className="label" htmlFor="deploy-group">Device group</label><select id="deploy-group" className="input" value={group} onChange={(event) => setGroup(event.target.value)}>{['Unassigned', 'Infrastructure', 'Engineering', 'People', 'Sales', 'Marketing', 'Executive', 'Retail', 'Field Ops', 'Finance'].map((item) => <option key={item}>{item}</option>)}</select></div></div>
         </Panel>
         <Panel className="p-5 sm:p-6">
-          <span className="eyebrow">02 · Enrollment</span><h2 className="mt-2 font-display text-base font-semibold text-white">Connect automatically</h2><p className="mt-1 text-[11px] leading-5 text-slate-500">The hosted relay URL and a one-use enrollment credential are embedded when you build each installer.</p>
-          <div className="mt-5 rounded-xl border border-white/[0.06] bg-black/15 p-4"><div className="flex items-center gap-2 text-[11px] font-medium text-slate-200"><Server size={14} className="text-lime-300"/>Agon hosted control plane</div><p className="mt-2 break-all font-mono text-[10px] text-slate-500">{window.location.origin}/api/agon</p><p className="mt-2 text-[10px] leading-4 text-slate-600">No relay URL, administrator token or enrollment token needs manual setup. The generated credential expires in 24 hours and can enroll one device.</p></div>
+          <span className="eyebrow">02 · Device pairing</span><h2 className="mt-2 font-display text-base font-semibold text-white">Connect automatically</h2><p className="mt-1 text-[11px] leading-5 text-slate-500">The agent creates a stable device identity and asks the signed-in operator to approve its first relay connection.</p>
+          <div className="mt-5 rounded-xl border border-white/[0.06] bg-black/15 p-4"><div className="flex items-center gap-2 text-[11px] font-medium text-slate-200"><Server size={14} className="text-lime-300"/>Agon hosted control plane</div><p className="mt-2 break-all font-mono text-[10px] text-slate-500">{window.location.origin}/api/agon</p><p className="mt-2 text-[10px] leading-4 text-slate-600">No relay URL or reusable access token is entered manually. The installer prints a pairing code; the relay stays locked until you approve that code in this account.</p></div>
           <div className="mt-5 flex items-center justify-between gap-4 rounded-xl border border-white/[0.07] bg-white/[0.022] p-4"><div><p className="text-[12px] font-medium text-slate-200">Authorize unattended diagnostics</p><p className="mt-1 max-w-md text-[10px] leading-4 text-slate-500">Allows pre-authorized support requests. Leave off to require interactive endpoint approval.</p></div><Toggle checked={access === 'unattended'} onChange={(checked) => { setAccess(checked ? 'unattended' : 'interactive'); setPackageInfo(null) }} label="Allow unattended diagnostics"/></div>
         </Panel>
       </div>
@@ -238,7 +230,7 @@ export default function Deployment() {
             {packageInfo && <motion.div className="mt-4 rounded-xl border border-lime-300/15 bg-lime-300/[0.04] p-4" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}><div className="flex items-center gap-2 text-[11px] font-medium text-lime-200"><PackageCheck size={15}/>Build verified</div><p className="mt-2 break-all font-mono text-[9px] text-slate-500">{packageInfo.name}</p><div className="mt-3 flex items-center justify-between text-[9px] text-slate-500"><span>{formatBytes(packageInfo.size)}</span><button onClick={downloadAgain} className="text-lime-300 hover:text-lime-200">Download again</button></div></motion.div>}
             {manifestError && <p className="mt-3 text-[10px] text-rose-300">{manifestError}</p>}
             <Button variant="primary" size="lg" className="mt-5 w-full" icon={building ? LoaderCircle : CloudDownload} disabled={building || !artifact} onClick={buildPackage}>{building ? 'Building native package…' : packageInfo ? 'Build another installer' : 'Build & download installer'}</Button>
-            <p className="mt-3 flex items-start gap-2 text-[9px] leading-4 text-slate-600"><ShieldCheck size={12} className="mt-0.5 shrink-0"/>The agent binary is checksum-verified. A unique single-use enrollment token is issued by the signed-in control plane and included in the downloaded ZIP.</p>
+            <p className="mt-3 flex items-start gap-2 text-[9px] leading-4 text-slate-600"><ShieldCheck size={12} className="mt-0.5 shrink-0"/>The agent binary is checksum-verified. It generates its own long-lived device credential locally; the hosted relay stores only a hash and requires code confirmation before activation.</p>
           </div>
         </Panel>
         {platform === 'android' && <Panel className="border-amber-300/10 bg-amber-300/[0.02] p-4"><div className="flex gap-3"><Smartphone size={17} className="shrink-0 text-amber-300"/><div><p className="text-[11px] font-medium text-amber-100">Android deployment scope</p><p className="mt-1 text-[10px] leading-5 text-slate-500">This is a real ARM64 agent for MDM/ADB-managed devices, not an APK. Android boot persistence requires explicit device-owner provisioning.</p></div></div></Panel>}

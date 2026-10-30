@@ -172,7 +172,7 @@ export default function Settings() {
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="label">Default enrollment group</label>
+                    <label className="label">Default device group</label>
                     <select
                       className="input"
                       value={settings.defaultGroup}
@@ -248,7 +248,7 @@ export default function Settings() {
                       {window.location.origin}/api/agon
                     </p>
                     <p className="mt-2 text-[10px] leading-5 text-slate-500">
-                      Sign-in protects operator actions. Installers get a unique, single-use enrollment token automatically when you build each package.
+                      Sign-in protects operator actions. Device credentials are generated locally, and each new endpoint requires pairing-code approval before relay access.
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">

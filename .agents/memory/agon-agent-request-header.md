@@ -1,10 +1,10 @@
 ---
-name: Hosted agent enrollment request header
-description: The hosted request guard requires a request marker on the Go agent's enrollment POST.
+name: Hosted native agent pairing headers
+description: Hosted pairing requests need the native marker plus same-origin referrer headers.
 ---
 
-Agent enrollment POSTs must include `X-Requested-With: XMLHttpRequest`; without it, the hosted request guard can reject enrollment with 403 before the application route runs.
+Hosted native agent pairing requests must include `X-Requested-With: XMLHttpRequest` and matching `Origin` and `Referer` headers. Without them, the hosted request guard can reject the call before the application route runs. Standalone relay requests should omit browser-origin headers.
 
-**Why:** Enrollment is a public, one-time-token flow for native clients, but the hosted request guard still checks this header.
+**Why:** Native requests were rejected by the hosted edge for a missing request marker and then an invalid referrer.
 
-**How to apply:** Keep the header in the Go enrollment client, test that the outgoing request contains it, and regenerate downloadable agent binaries after changing client code. Already-running binaries do not update automatically.
+**How to apply:** Derive matching origin headers from the configured hosted relay URL, test the outgoing HTTP and WebSocket requests, and regenerate downloadable agent binaries after client changes. Already-running binaries do not update automatically.

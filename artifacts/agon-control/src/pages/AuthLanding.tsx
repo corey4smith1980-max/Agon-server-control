@@ -14,8 +14,8 @@ const assurances = [
   },
   {
     icon: Fingerprint,
-    title: "Automatic enrollment",
-    description: "Each installer receives a short-lived, single-use credential.",
+    title: "Operator-approved pairing",
+    description: "Each agent creates its own device identity and waits for operator approval.",
   },
 ];
 
@@ -46,7 +46,7 @@ export default function AuthLanding() {
             </h1>
             <p className="mt-6 max-w-xl text-sm leading-7 text-slate-400 sm:text-base">
               Sign in to create an account-isolated fleet. Agon hosts the relay;
-              installers connect back here and enroll automatically.
+              installers connect back here and request approval with a device-generated pairing code.
             </p>
             <div className="mt-9 flex flex-wrap gap-3">
               <Link
@@ -63,7 +63,7 @@ export default function AuthLanding() {
               </Link>
             </div>
             <p className="mt-4 text-[10px] leading-5 text-slate-600">
-              Your account controls only devices enrolled from its own installers.
+              Your account controls only devices paired and approved from its own console.
               No relay URL or site token needs to be configured manually.
             </p>
           </div>

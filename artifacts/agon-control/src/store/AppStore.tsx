@@ -13,6 +13,7 @@ interface SessionInput {
 }
 
 interface StoreValue {
+  userId: string
   devices: Device[]
   sessions: SupportSession[]
   relays: Relay[]
@@ -290,8 +291,8 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
         id: String(device.id), name: String(device.name || device.hostname), hostname: String(device.hostname || device.name),
         platform: platformFromOs(String(device.os)), os: String(device.os || 'Unknown'), arch: String(device.arch || 'unknown'),
         group: String(device.group || 'Unassigned'), status: device.online ? 'online' : 'offline', ip: 'Reported by agent',
-        lastSeen: String(device.lastSeen || device.enrolledAt || new Date().toISOString()), agentVersion: String(device.agent || 'unknown'),
-        relay: String(device.relayId || 'relay'), cpu: 0, memory: 0, disk: 0, user: 'Managed endpoint', tags: ['enrolled'],
+        lastSeen: String(device.lastSeen || device.pairedAt || device.enrolledAt || new Date().toISOString()), agentVersion: String(device.agent || 'unknown'),
+        relay: String(device.relayId || 'relay'), cpu: 0, memory: 0, disk: 0, user: 'Managed endpoint', tags: ['paired'],
         access: 'interactive', location: 'Not reported', sample: false,
       }))
       const deviceNames = new Map(realDevices.map((device) => [device.id, device.name]))
@@ -340,7 +341,7 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
         const action = String(event.action || 'relay.event')
         const category: AuditEvent['category'] = action.includes('session') ? 'access'
           : action.includes('device') || action.includes('agent') ? 'device'
-            : action.includes('enrollment') ? 'deployment'
+            : action.includes('pairing') ? 'device'
               : action.includes('security') || action.includes('auth') ? 'security'
                 : action.includes('relay') ? 'relay' : 'automation'
         const rawSeverity = String(event.severity)
@@ -411,10 +412,10 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
   }, [setDevices, setSessions, setRelays, setJobs, setAudit, setSettings, toast])
 
   const value = useMemo<StoreValue>(() => ({
-    devices, sessions, relays, jobs, audit, settings, toasts, syncing,
+    userId, devices, sessions, relays, jobs, audit, settings, toasts, syncing,
     updateSettings, updateDevice, removeDevices, createSession, updateSession, runJob,
     addRelay, removeRelay, testRelay, syncControlPlane, addAudit, toast, dismissToast, resetWorkspace,
-  }), [devices, sessions, relays, jobs, audit, settings, toasts, syncing, updateSettings, updateDevice, removeDevices, createSession, updateSession, runJob, addRelay, removeRelay, testRelay, syncControlPlane, addAudit, toast, dismissToast, resetWorkspace])
+  }), [userId, devices, sessions, relays, jobs, audit, settings, toasts, syncing, updateSettings, updateDevice, removeDevices, createSession, updateSession, runJob, addRelay, removeRelay, testRelay, syncControlPlane, addAudit, toast, dismissToast, resetWorkspace])
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
 }

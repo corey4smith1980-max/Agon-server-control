@@ -31,7 +31,7 @@ export async function createRecord(
   ownerId: string,
   kind: string,
   data: Record<string, unknown>,
-  id = randomUUID(),
+  id: string = randomUUID(),
 ): Promise<AgonRecord> {
   const result = await pool.query<DatabaseRecord>(
     `INSERT INTO agon_records (id, owner_id, kind, data)

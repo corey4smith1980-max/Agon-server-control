@@ -32,7 +32,7 @@ export function platformLabel(platform: Platform) {
   return ({ windows: 'Windows', macos: 'macOS', linux: 'Linux', android: 'Android' })[platform]
 }
 
-export function randomToken(prefix = 'agon_enroll') {
+export function randomToken(prefix = 'agon_device') {
   const bytes = new Uint8Array(24)
   crypto.getRandomValues(bytes)
   return `${prefix}_${Array.from(bytes, (byte) => byte.toString(36).padStart(2, '0')).join('').slice(0, 36)}`

@@ -1,6 +1,6 @@
 # Agon control plane
 
-A relay for explicitly managed endpoints. Agents make outbound WebSocket connections, so endpoints do not need inbound firewall ports. The relay authenticates enrollment, stores only hashed device credentials, dispatches an allowlisted job protocol, and retains a chronological audit list.
+A relay for explicitly managed endpoints. Agents make outbound WebSocket connections, so endpoints do not need inbound firewall ports. Agents generate their own credentials; the relay stores only hashes and activates a device only after an operator confirms its pairing code.
 
 ## Run locally
 
@@ -8,22 +8,21 @@ Requires Node.js 20 or later.
 
 ```sh
 npm ci
-export ENROLLMENT_TOKEN="$(openssl rand -base64 36)"
 export ADMIN_TOKEN="$(openssl rand -base64 48)"
 npm start
 ```
 
-Set `ALLOW_ORIGIN` to the exact origin of the Agon console (for local development, `http://localhost:5173`). The service refuses to start without separate, 32-character `ENROLLMENT_TOKEN` and `ADMIN_TOKEN` values. Open `http://localhost:8787/health` to check the relay. Plain HTTP is intended only for local development. Put the service behind an HTTPS reverse proxy (Caddy, nginx, or a managed load balancer) before enrolling devices over a network.
+Set `ALLOW_ORIGIN` to the exact HTTPS origin of the Agon console. The service requires a 32-character `ADMIN_TOKEN`; agents do not share a relay-wide enrollment secret. Open `http://localhost:8787/health` to check the relay. Plain HTTP is intended only for local development. Put the service behind an HTTPS reverse proxy (Caddy, nginx, or a managed load balancer) before pairing devices over a network.
 
 ## Docker
 
 ```sh
 cp .env.example .env
-# Replace both tokens and set your console origin in .env
+# Set ADMIN_TOKEN and ALLOW_ORIGIN in .env
 docker compose up --build -d
 ```
 
-For multiple regions, deploy one instance per region with a unique `RELAY_ID` and durable volume. Use your DNS/global load-balancer policy to route each enrollment package to its preferred region. Each instance is an independent trust domain; do not copy device credential databases between regions.
+For multiple regions, deploy one instance per region with a unique `RELAY_ID` and durable volume. Use your DNS/global load-balancer policy to route each configured agent to its preferred region. Each instance is an independent trust domain; do not copy device credential databases between regions.
 
 ## Agent installation
 
@@ -31,7 +30,10 @@ The console's Deployment page bundles a compiled agent, `agent.json`, and a plat
 
 ## Protocol
 
-- `POST /api/enroll` exchanges the site enrollment token for a random per-device token.
+- `POST /api/pair-requests` records an unapproved device request. The agent generates its own ID, credential, and one-time pairing code; it sends `X-Requested-With: XMLHttpRequest`.
+- `GET /api/pending-devices` requires `Authorization: Bearer ADMIN_TOKEN` and lists safe device metadata.
+- `POST /api/pending-devices/:id/approve` requires the admin token and JSON `{ "pairingCode": "..." }`. The pairing code is printed on the endpoint during setup.
+- `DELETE /api/pending-devices/:id` ignores an unapproved request.
 - `GET /api/devices`, `/api/jobs`, `/api/sessions`, and `/api/audit` require `Authorization: Bearer ADMIN_TOKEN`.
 - `POST /api/devices/:id/commands` accepts only `agent.ping`, `inventory.refresh`, `diagnostics.network`, and `session.request`.
 - Agents connect to `/agent?deviceId=...` and authenticate using an Authorization header. Operators that use the optional WebSocket feed authenticate via WebSocket subprotocols, not URL query tokens.

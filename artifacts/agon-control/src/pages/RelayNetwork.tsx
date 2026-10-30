@@ -93,7 +93,7 @@ export default function RelayNetwork() {
                 },
                 {
                   icon: LockKeyhole,
-                  label: "Enrollment",
+                  label: "Pairing",
                   value: "One-use credential",
                 },
               ].map(({ icon: Icon, label, value }) => (
@@ -160,7 +160,7 @@ export default function RelayNetwork() {
               Account devices
             </h2>
             <p className="mt-1 text-[10px] text-slate-500">
-              Devices enrolled by installers generated in this account.
+              Devices paired by operators in this account.
             </p>
           </div>
           <Badge>{devices.length} devices</Badge>
@@ -193,9 +193,9 @@ export default function RelayNetwork() {
           </div>
         ) : (
           <div className="px-5 py-12 text-center">
-            <p className="text-sm font-medium text-slate-300">No devices enrolled yet</p>
+            <p className="text-sm font-medium text-slate-300">No devices paired yet</p>
             <p className="mx-auto mt-2 max-w-md text-[10px] leading-5 text-slate-600">
-              Build an installer from Agent deployment. The relay address and its one-time enrollment credential are included automatically.
+              Build an installer from Agent deployment, then approve its endpoint pairing code in the console.
             </p>
           </div>
         )}

@@ -10,17 +10,14 @@ const dataDir = process.env.DATA_DIR || path.join(here, 'data');
 fs.mkdirSync(dataDir, { recursive: true });
 const storePath = path.join(dataDir, 'control-plane.json');
 const port = Number(process.env.PORT || 8787);
-const enrollmentToken = process.env.ENROLLMENT_TOKEN || '';
 const adminToken = process.env.ADMIN_TOKEN || '';
 const relayId = process.env.RELAY_ID || 'local-relay';
 const configuredOrigins = process.env.ALLOW_ORIGIN || '';
 const startedAt = new Date().toISOString();
 const allowedActions = new Set(['agent.ping', 'inventory.refresh', 'diagnostics.network', 'session.request']);
 
-for (const [name, value] of [['ENROLLMENT_TOKEN', enrollmentToken], ['ADMIN_TOKEN', adminToken]]) {
-  if (value.length < 32 || value.includes('replace-with')) {
-    throw new Error(`${name} must be configured with at least 32 characters. See .env.example.`);
-  }
+if (adminToken.length < 32 || adminToken.includes('replace-with')) {
+  throw new Error('ADMIN_TOKEN must be configured with at least 32 characters. See .env.example.');
 }
 
 if (!configuredOrigins) {
@@ -34,12 +31,13 @@ for (const origin of allowedOrigins) {
   }
 }
 
-let store = { devices: {}, jobs: {}, sessions: {}, audit: [] };
+let store = { devices: {}, pendingDevices: {}, jobs: {}, sessions: {}, audit: [] };
 try {
   store = { ...store, ...JSON.parse(fs.readFileSync(storePath, 'utf8')) };
 } catch (error) {
   if (error.code !== 'ENOENT') console.warn('Could not read data store; starting empty:', error.message);
 }
+store.pendingDevices ||= {};
 // A persisted online flag is only a historical value; sockets must reconnect after a restart.
 for (const device of Object.values(store.devices)) device.online = false;
 
@@ -77,7 +75,7 @@ function applyCors(request, response) {
   if (!allowedOrigins.has(origin)) return false;
   response.setHeader('Access-Control-Allow-Origin', origin);
   response.setHeader('Vary', 'Origin');
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
   response.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   return true;
 }
@@ -98,6 +96,27 @@ function secretEqual(received, expected) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+function hash(value) {
+  return crypto.createHash('sha256').update(String(value || '')).digest('hex');
+}
+
+function normalizePairingCode(value) {
+  return String(value || '').toUpperCase().replace(/[^A-Z2-7]/g, '');
+}
+
+const pairRequestWindows = new Map();
+function allowPairRequest(ip) {
+  const now = Date.now();
+  const current = pairRequestWindows.get(ip);
+  if (!current || now - current.startedAt >= 10 * 60_000) {
+    pairRequestWindows.set(ip, { startedAt: now, count: 1 });
+    return true;
+  }
+  if (current.count >= 12) return false;
+  current.count += 1;
+  return true;
+}
+
 function isAdmin(request) {
   return secretEqual(request.headers.authorization?.replace(/^Bearer\s+/i, ''), adminToken);
 }
@@ -113,7 +132,7 @@ function publicDevice(device) {
     id: device.id, name: device.name, hostname: device.hostname, group: device.group,
     os: device.os, arch: device.arch, agent: device.agent, cpus: device.cpus,
     interfaces: device.interfaces, relayId: device.relayId, online: Boolean(device.online),
-    enrolledAt: device.enrolledAt, lastSeen: device.lastSeen,
+    pairedAt: device.pairedAt || device.enrolledAt, lastSeen: device.lastSeen,
   };
 }
 
@@ -163,24 +182,94 @@ async function route(request, response) {
       transport: 'WebSocket', tlsRequiredInProduction: true,
     });
   }
-  if (request.method === 'POST' && url.pathname === '/api/enroll') {
-    const input = await body(request);
-    if (!secretEqual(input.enrollmentToken, enrollmentToken)) {
-      audit('enrollment.denied', 'agent', { reason: 'invalid token' }, 'warning');
-      return json(response, 403, { error: 'Invalid enrollment token' });
+  if (request.method === 'POST' && url.pathname === '/api/pair-requests') {
+    if (request.headers['x-requested-with'] !== 'XMLHttpRequest') {
+      return json(response, 403, { error: 'Expected X-Requested-With header' });
     }
+    const input = await body(request);
+    const deviceId = String(input.deviceId || '');
+    const deviceToken = String(input.deviceToken || '');
+    const pairingCode = normalizePairingCode(input.pairingCode);
     const device = input.device || {};
-    if (!device.name && !device.hostname) return json(response, 400, { error: 'Device name or hostname required' });
-    const id = crypto.randomUUID();
-    const deviceToken = crypto.randomBytes(32).toString('base64url');
-    const tokenHash = crypto.createHash('sha256').update(deviceToken).digest('hex');
-    store.devices[id] = {
-      ...device, id, name: device.name || device.hostname, tokenHash, online: false,
-      enrolledAt: new Date().toISOString(), lastSeen: null, relayId,
+    if (!deviceId || deviceToken.length < 32 || pairingCode.length !== 16 || (!device.name && !device.hostname)) {
+      return json(response, 400, { error: 'Device pairing data is incomplete' });
+    }
+    const tokenHash = hash(deviceToken);
+    const active = store.devices[deviceId];
+    if (active) {
+      if (!secretEqual(tokenHash, active.tokenHash)) return json(response, 409, { error: 'Device identity is already in use' });
+      return json(response, 200, { status: 'approved' });
+    }
+    const existing = store.pendingDevices[deviceId];
+    if (existing) {
+      if (!secretEqual(tokenHash, existing.tokenHash) || !secretEqual(hash(pairingCode), existing.pairingCodeHash)) {
+        return json(response, 409, { error: 'Device identity is already in use' });
+      }
+      return json(response, 202, { status: 'pending' });
+    }
+    if (!allowPairRequest(request.socket.remoteAddress || 'unknown')) {
+      return json(response, 429, { error: 'Too many device pairing requests. Try again later.' });
+    }
+    if (Object.keys(store.pendingDevices).length >= 1000) {
+      return json(response, 429, { error: 'Too many unapproved devices on this relay.' });
+    }
+    const now = new Date();
+    store.pendingDevices[deviceId] = {
+      ...device,
+      id: deviceId,
+      name: String(device.name || device.hostname).slice(0, 100),
+      tokenHash,
+      pairingCodeHash: hash(pairingCode),
+      relayId,
+      online: false,
+      allowUnattended: input.allowUnattended === true,
+      requestedAt: now.toISOString(),
     };
-    audit('device.enrolled', 'agent', { deviceId: id, name: device.name || device.hostname });
+    audit('device.pairing.requested', 'agent', { deviceId, name: store.pendingDevices[deviceId].name });
     save();
-    return json(response, 200, { deviceId: id, deviceToken, relayId });
+    return json(response, 202, { status: 'pending' });
+  }
+  if (request.method === 'GET' && url.pathname === '/api/pending-devices') {
+    if (!requireAdmin(request, response)) return;
+    const devices = Object.values(store.pendingDevices)
+      .map(({ tokenHash: _tokenHash, pairingCodeHash: _pairingCodeHash, ...device }) => device);
+    return json(response, 200, { devices });
+  }
+  const pairingApprovalMatch = url.pathname.match(/^\/api\/pending-devices\/([a-f0-9-]+)\/approve$/i);
+  if (request.method === 'POST' && pairingApprovalMatch) {
+    if (!requireAdmin(request, response)) return;
+    const input = await body(request);
+    const deviceId = pairingApprovalMatch[1];
+    const pending = store.pendingDevices[deviceId];
+    if (!pending) {
+      return json(response, 404, { error: 'Pending device not found' });
+    }
+    const code = normalizePairingCode(input.pairingCode);
+    if (code.length !== 16 || !secretEqual(hash(code), pending.pairingCodeHash)) {
+      return json(response, 403, { error: 'Pairing code does not match this endpoint' });
+    }
+    const { pairingCodeHash: _pairingCodeHash, ...device } = pending;
+    store.devices[deviceId] = {
+      ...device,
+      pairedAt: new Date().toISOString(),
+      online: false,
+      lastSeen: null,
+    };
+    delete store.pendingDevices[deviceId];
+    audit('device.pairing.approved', 'operator', { deviceId, name: device.name }, 'success');
+    save();
+    return json(response, 200, { deviceId, status: 'approved' });
+  }
+  const pairingDismissMatch = url.pathname.match(/^\/api\/pending-devices\/([a-f0-9-]+)$/i);
+  if (request.method === 'DELETE' && pairingDismissMatch) {
+    if (!requireAdmin(request, response)) return;
+    const deviceId = pairingDismissMatch[1];
+    const pending = store.pendingDevices[deviceId];
+    if (!pending) return json(response, 404, { error: 'Pending device not found' });
+    delete store.pendingDevices[deviceId];
+    audit('device.pairing.rejected', 'operator', { deviceId, name: pending.name }, 'warning');
+    save();
+    return json(response, 200, { ignored: true });
   }
   if (request.method === 'GET' && url.pathname === '/api/devices') {
     if (!requireAdmin(request, response)) return;
