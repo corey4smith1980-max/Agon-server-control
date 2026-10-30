@@ -58,7 +58,7 @@ export function NewSessionModal() {
     toast('Invitation copied', 'Share it with the customer through your trusted support channel.')
   }
 
-  return <Modal open={open} onClose={close} title={createdCode ? 'Support request created' : 'Create support request'} description={createdCode ? 'Share the request code through a trusted channel.' : 'Create a consent or endpoint-policy record. This is not a Quick Assist code and does not connect to a desktop.'}>
+  return <Modal open={open} onClose={close} title={createdCode ? 'Support request created' : 'Create support request'} description={createdCode ? 'Share the request code through a trusted channel.' : 'Create a consent or endpoint-policy record. The request code does not provide desktop access.'}>
     {createdCode ? <div className="p-6">
       <div className="subtle-grid relative overflow-hidden rounded-2xl border border-lime-300/15 bg-lime-300/[0.035] px-6 py-8 text-center">
         <div className="mx-auto mb-5 flex h-11 w-11 items-center justify-center rounded-xl bg-lime-300 text-[#15200c]"><Check size={22} /></div>

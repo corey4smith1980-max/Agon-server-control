@@ -5,7 +5,6 @@ import type { SupportSession } from '../lib/types'
 import { cn, copyText, downloadText, openSessionLauncher, timeAgo } from '../lib/utils'
 import { useAppStore } from '../store/AppStore'
 import { Badge, Button, DetailRow, EmptyState, IconButton, Modal, PageHeader, Panel } from '../components/UI'
-import { RemoteAccessGuide } from '../components/RemoteAccessGuide'
 
 function RequestStatus({ status }: { status: SupportSession['status'] }) {
   const tone = status === 'active' || status === 'ended' ? 'green' : status === 'waiting' || status === 'consent_required' ? 'amber' : 'red'
@@ -50,8 +49,7 @@ export default function Sessions() {
   const counts = { active: sessions.filter((s) => s.status === 'active').length, waiting: sessions.filter((s) => s.status === 'waiting' || s.status === 'consent_required').length, ended: sessions.filter((s) => s.status === 'ended' || s.status === 'declined').length }
 
   return <div>
-    <PageHeader eyebrow="Consent and policy requests" title="Support requests" description="Use the Windows connection options below for actual remote support. Agon requests only record endpoint policy or user approval." actions={<Button variant="primary" icon={Plus} onClick={() => openSessionLauncher()}>New support request</Button>} />
-    <RemoteAccessGuide />
+    <PageHeader eyebrow="Consent and policy requests" title="Support requests" description="Create and review Agon requests for endpoint policy or user approval. The relay does not carry desktop video or input events." actions={<Button variant="primary" icon={Plus} onClick={() => openSessionLauncher()}>New support request</Button>} />
     <div className="mb-4 grid gap-3 sm:grid-cols-3">{[{ label: 'Accepted requests', value: counts.active, note: 'Request status only', icon: Activity, tone: 'text-lime-300' }, { label: 'Awaiting review', value: counts.waiting, note: 'Consent or policy pending', icon: Clock3, tone: 'text-amber-300' }, { label: 'Closed requests', value: counts.ended, note: 'Retained request records', icon: Check, tone: 'text-cyan-300' }].map((metric) => <Panel key={metric.label} className="flex items-center gap-4 p-4"><div className="rounded-xl bg-white/[0.035] p-3"><metric.icon size={19} className={metric.tone}/></div><div><p className="font-display text-2xl font-semibold text-white">{metric.value}</p><p className="text-[10px] text-slate-500">{metric.label} · {metric.note}</p></div></Panel>)}</div>
     <Panel className="overflow-hidden">
       <div className="flex flex-col gap-3 border-b border-white/[0.07] p-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex rounded-xl border border-white/[0.07] bg-black/10 p-1">{(['active', 'waiting', 'ended'] as const).map((value) => <button key={value} onClick={() => setTab(value)} className={cn('rounded-lg px-4 py-2 text-[11px] font-medium capitalize transition', tab === value ? 'bg-white/[0.08] text-white' : 'text-slate-500 hover:text-slate-300')}>{value}<span className="ml-2 font-mono text-[9px] text-slate-600">{counts[value]}</span></button>)}</div><div className="relative sm:w-72"><Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600"/><input className="input pl-9" placeholder="Search sessions…" value={query} onChange={(event) => setQuery(event.target.value)}/></div></div>

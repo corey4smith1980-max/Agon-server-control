@@ -1,6 +1,6 @@
 import JSZip from 'jszip'
 import { motion } from 'framer-motion'
-import { Apple, Check, CloudDownload, Code2, Copy, Download, ExternalLink, FileCheck2, Laptop, LoaderCircle, PackageCheck, PackagePlus, Server, ShieldCheck, Smartphone, Terminal } from 'lucide-react'
+import { Apple, Check, CloudDownload, Code2, Copy, Download, FileCheck2, Laptop, LoaderCircle, PackageCheck, PackagePlus, Server, ShieldCheck, Smartphone, Terminal } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { Platform } from '../lib/types'
 import { artifactPath, cn, copyText, formatBytes, platformLabel } from '../lib/utils'
@@ -28,12 +28,36 @@ function windowsInstaller() {
   return `# Agon Agent 1.0.0
 #Requires -RunAsAdministrator
 $ErrorActionPreference = "Stop"
-$PackageRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not $PSCommandPath) {
+  throw "Run the saved install.ps1 file from the extracted package; do not paste its contents into an interactive PowerShell prompt."
+}
+$PackageRoot = Split-Path -Parent $PSCommandPath
+$Agent = Join-Path $PackageRoot "agon-agent.exe"
+$Config = Join-Path $PackageRoot "agent.json"
+if (-not (Test-Path $Agent -PathType Leaf)) { throw "Agent binary not found: $Agent" }
+if (-not (Test-Path $Config -PathType Leaf)) { throw "Agent configuration not found: $Config" }
 Write-Host "Installing Agon Agent as a visible Windows service..." -ForegroundColor Cyan
-& (Join-Path $PackageRoot "agon-agent.exe") -config (Join-Path $PackageRoot "agent.json") -install -consent
-if ($LASTEXITCODE -ne 0) { throw "Agent installation failed with exit code $LASTEXITCODE" }
-Get-Service AgonAgent
-Write-Host "Installed. Manage it in services.msc or run uninstall.ps1 to remove it." -ForegroundColor Green
+ $priorNativeErrorPreference = $PSNativeCommandUseErrorActionPreference
+$PSNativeCommandUseErrorActionPreference = $false
+try {
+  $agentOutput = & $Agent -config $Config -install -consent 2>&1
+  $agentExitCode = $LASTEXITCODE
+} finally {
+  $PSNativeCommandUseErrorActionPreference = $priorNativeErrorPreference
+}
+if ($agentOutput) { $agentOutput | ForEach-Object { Write-Host $_ } }
+if ($agentExitCode -ne 0) {
+  throw "Agon Agent installation failed with exit code $agentExitCode. Review the agent output above, then run install.ps1 from the extracted package in an elevated PowerShell window."
+}
+$service = Get-Service -Name "AgonAgent" -ErrorAction SilentlyContinue
+if (-not $service) {
+  throw "The installer returned success but Windows did not register AgonAgent. Run install.ps1 from the extracted package in an elevated PowerShell window."
+}
+if ($service.Status -ne "Running") {
+  Start-Service -Name "AgonAgent"
+  (Get-Service -Name "AgonAgent").WaitForStatus("Running", [TimeSpan]::FromSeconds(20))
+}
+Write-Host "Installed and running. Manage it in services.msc or run uninstall.ps1 to remove it." -ForegroundColor Green
 `
 }
 
@@ -191,15 +215,6 @@ export default function Deployment() {
   const copy = async (value: string, label: string) => { await copyText(value); toast(`${label} copied`) }
   return <div>
     <PageHeader eyebrow="Real artifacts · Agent v1.0.0" title="Agent deployment" description="Download native binaries or build a configured installer around checksum-verified agents. Installation requires administrator consent." actions={<><Button icon={Download} onClick={() => { const anchor = document.createElement('a'); anchor.href = artifactPath('downloads/agon-agent-builds.zip'); anchor.download = ''; anchor.click() }}>Agent builds ZIP</Button><Button icon={Code2} onClick={() => { const anchor = document.createElement('a'); anchor.href = artifactPath('downloads/agon-agent-source.zip'); anchor.download = ''; anchor.click() }}>Agent source</Button></>} />
-    <Panel className="mb-4 flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between" testId="card-quick-assist-shortcut">
-      <div className="flex items-start gap-3">
-        <div className="rounded-xl border border-lime-300/15 bg-lime-300/[0.06] p-2.5 text-lime-300"><Laptop size={18} /></div>
-        <div><p className="text-sm font-medium text-white">Need live desktop control now?</p><p className="mt-1 max-w-2xl text-xs leading-5 text-slate-400">Use Microsoft Quick Assist for a user-approved session. The Agon agent installs for inventory and diagnostics; it does not provide screen or keyboard/mouse control.</p></div>
-      </div>
-      <a data-testid="link-deployment-quick-assist" href="https://aka.ms/quickassist" target="_blank" rel="noreferrer" className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 self-start rounded-xl bg-lime-300 px-4 py-2 text-xs font-semibold text-[#15200c] transition hover:bg-lime-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-300 sm:self-auto">
-        Open Quick Assist <ExternalLink size={14} />
-      </a>
-    </Panel>
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,.8fr)]">
       <div className="space-y-4">
         <Panel className="p-5 sm:p-6">
