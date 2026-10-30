@@ -10,6 +10,7 @@ import {
   listRecords,
   saveRecord,
 } from "./agonStore";
+import { logger } from "./logger";
 
 const allowedActions = new Set([
   "agent.ping",
@@ -330,9 +331,11 @@ export function attachAgonWebSockets(server: HttpServer): void {
       return;
     }
     const { deviceId, ownerId } = context;
+    const logDeviceId = deviceId.slice(0, 8);
     const previous = connections.get(deviceId);
     if (previous && previous.socket !== socket) previous.socket.close(4001, "Reconnected");
     connections.set(deviceId, { ownerId, socket });
+    logger.info({ deviceId: logDeviceId }, "Agon agent WebSocket connected");
     let awaitingPong = false;
     const pingTimer = setInterval(() => {
       if (socket.readyState !== WebSocket.OPEN) return;
@@ -351,25 +354,72 @@ export function attachAgonWebSockets(server: HttpServer): void {
       awaitingPong = false;
     });
 
-    void updateHeartbeat(ownerId, deviceId);
-    void sendQueuedJobs(ownerId, deviceId, socket);
+    void updateHeartbeat(ownerId, deviceId).catch((err: unknown) => {
+      logger.error({ err, deviceId: logDeviceId }, "Initial Agon heartbeat update failed");
+    });
+    void sendQueuedJobs(ownerId, deviceId, socket).catch((err: unknown) => {
+      logger.error({ err, deviceId: logDeviceId }, "Initial Agon job dispatch failed");
+    });
 
-    socket.on("message", (raw) => {
-      void (async () => {
-        const message = JSON.parse(raw.toString()) as AgentMessage;
+    let messageQueue = Promise.resolve();
+    socket.on("message", (raw, isBinary) => {
+      if (isBinary) {
+        logger.warn({ deviceId: logDeviceId }, "Rejected binary Agon agent message");
+        socket.close(1003, "Text JSON messages required");
+        return;
+      }
+
+      let message: AgentMessage;
+      try {
+        const parsed: unknown = JSON.parse(raw.toString());
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("Agent message must be a JSON object");
+        }
+        message = parsed as AgentMessage;
+      } catch (err) {
+        logger.warn({ err, deviceId: logDeviceId }, "Rejected invalid Agon agent JSON");
+        socket.close(1007, "Invalid JSON message");
+        return;
+      }
+
+      if (
+        message.type !== "hello" &&
+        message.type !== "heartbeat" &&
+        message.type !== "command_result"
+      ) {
+        logger.warn(
+          { deviceId: logDeviceId, messageType: message.type ?? "missing" },
+          "Rejected unsupported Agon agent message type",
+        );
+        socket.close(1008, "Unsupported agent message type");
+        return;
+      }
+
+      messageQueue = messageQueue.then(async () => {
         if (message.type === "hello") {
           await updateHeartbeat(ownerId, deviceId, message.device);
         } else if (message.type === "heartbeat") {
           await updateHeartbeat(ownerId, deviceId, message.device);
           await sendQueuedJobs(ownerId, deviceId, socket);
-        } else if (message.type === "command_result") {
+        } else {
           await completeJob(ownerId, deviceId, message);
         }
-      })().catch(() => socket.close(1003, "Invalid agent message"));
+      }).catch((err: unknown) => {
+        // Database/runtime failures are not malformed client frames. Keep the
+        // socket alive so the next heartbeat can retry transient operations.
+        logger.error(
+          { err, deviceId: logDeviceId, messageType: message.type },
+          "Failed to process Agon agent message",
+        );
+      });
     });
 
-    socket.on("close", () => {
+    socket.on("close", (code, reason) => {
       clearInterval(pingTimer);
+      logger.info(
+        { deviceId: logDeviceId, closeCode: code, closeReason: reason.toString().slice(0, 120) },
+        "Agon agent WebSocket closed",
+      );
       if (connections.get(deviceId)?.socket !== socket) return;
       connections.delete(deviceId);
       void (async () => {
@@ -383,6 +433,9 @@ export function attachAgonWebSockets(server: HttpServer): void {
       })();
     });
 
-    socket.on("error", () => socket.close());
+    socket.on("error", (err) => {
+      logger.warn({ err, deviceId: logDeviceId }, "Agon agent WebSocket transport error");
+      socket.close();
+    });
   });
 }
