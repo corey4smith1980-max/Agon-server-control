@@ -1,5 +1,7 @@
 import type { Platform } from './types'
 
+export const HOSTED_CONTROL_PLANE_URL = 'https://agon-server-control.replit.app/api/agon'
+
 export function cn(...classes: Array<string | false | null | undefined | Record<string, boolean>>) {
   return classes.flatMap((value) => {
     if (typeof value === 'string') return value ? [value] : []

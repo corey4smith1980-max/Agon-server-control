@@ -1,6 +1,7 @@
 import { Activity, Globe2, LockKeyhole, RefreshCw, Server, ShieldCheck, Wifi } from "lucide-react";
 import { useState } from "react";
 import { useAppStore } from "../store/AppStore";
+import { HOSTED_CONTROL_PLANE_URL } from "../lib/utils";
 import { Badge, Button, DetailRow, PageHeader, Panel } from "../components/UI";
 
 export default function RelayNetwork() {
@@ -75,7 +76,7 @@ export default function RelayNetwork() {
                 </Badge>
               </div>
               <p className="mt-5 break-all rounded-xl border border-white/[0.06] bg-black/15 px-3 py-2.5 font-mono text-[10px] text-slate-400">
-                {hostedRelay?.url ?? `${window.location.origin}/api/agon`}
+                {hostedRelay?.url ?? HOSTED_CONTROL_PLANE_URL}
               </p>
             </div>
 

@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { downloadText } from "../lib/utils";
+import { downloadText, HOSTED_CONTROL_PLANE_URL } from "../lib/utils";
 import { useAppStore } from "../store/AppStore";
 import { Badge, Button, Modal, PageHeader, Panel, Toggle } from "../components/UI";
 
@@ -245,7 +245,7 @@ export default function Settings() {
                       Hosted API
                     </p>
                     <p className="mt-2 break-all font-mono text-[11px] text-slate-300">
-                      {window.location.origin}/api/agon
+                      {HOSTED_CONTROL_PLANE_URL}
                     </p>
                     <p className="mt-2 text-[10px] leading-5 text-slate-500">
                       Sign-in protects operator actions. Device credentials are generated locally, and each new endpoint requires pairing-code approval before relay access.

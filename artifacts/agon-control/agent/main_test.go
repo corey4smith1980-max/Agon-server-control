@@ -48,8 +48,8 @@ func TestPairRequestSendsNativeHeaders(t *testing.T) {
 	if got := gotHeaders.Get("Origin"); got != server.URL {
 		t.Fatalf("Origin = %q, want %q", got, server.URL)
 	}
-	if got := gotHeaders.Get("Referer"); got != server.URL+"/" {
-		t.Fatalf("Referer = %q, want %q", got, server.URL+"/")
+	if got := gotHeaders.Get("Referer"); got != server.URL+"/deployment" {
+		t.Fatalf("Referer = %q, want %q", got, server.URL+"/deployment")
 	}
 	if cfg.DeviceID == "" || cfg.DeviceToken == "" || len(cfg.PairingCode) != 16 {
 		t.Fatal("pair request did not create a stable identity and pairing code")

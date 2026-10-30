@@ -29,7 +29,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const agentVersion = "1.0.0"
+const agentVersion = "1.0.1"
 
 type Config struct {
 	ServerURL        string `json:"serverUrl"`
@@ -264,7 +264,7 @@ func setNativeRequestHeaders(req *http.Request, serverURL string) error {
 	if hostedControlPlane(serverURL) {
 		origin := u.Scheme + "://" + u.Host
 		req.Header.Set("Origin", origin)
-		req.Header.Set("Referer", origin+"/")
+		req.Header.Set("Referer", origin+"/deployment")
 	}
 	return nil
 }

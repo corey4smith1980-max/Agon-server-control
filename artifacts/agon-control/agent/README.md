@@ -1,6 +1,6 @@
 # Agon endpoint agent
 
-Version 1.0.0 — consent-based inventory and diagnostics for managed devices.
+Version 1.0.1 — consent-based inventory and diagnostics for managed devices.
 
 ## What the agent does
 
