@@ -45,5 +45,9 @@ app.use(
 );
 
 app.use("/api", router);
+// Keep the published deployment-page-prefixed control-plane URL working for
+// already-configured agents. The shared proxy routes this prefix to this API
+// service before the web artifact's SPA fallback.
+app.use("/deployment/api", router);
 
 export default app;

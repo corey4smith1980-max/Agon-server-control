@@ -147,7 +147,7 @@ try {
 
   const installerSource = await readFile(deploymentSource, 'utf8');
   const utilsSource = await readFile(utilsSourcePath, 'utf8');
-  assert(utilsSource.includes("https://agon-server-control.replit.app/api/agon"), 'Agent package must target the published API base URL.');
+  assert(utilsSource.includes("https://agon-server-control.replit.app/deployment/api/agon"), 'Agent package must target the published deployment-prefixed API base URL.');
   assert(installerSource.includes('const serverUrl = HOSTED_CONTROL_PLANE_URL'), 'Installer must use the published API base URL.');
   for (const required of [
     '#Requires -RunAsAdministrator',

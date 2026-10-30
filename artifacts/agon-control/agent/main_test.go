@@ -17,8 +17,8 @@ import (
 func TestPairRequestSendsNativeHeaders(t *testing.T) {
 	headers := make(chan http.Header, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/agon/api/pair-requests" {
-			t.Errorf("request path = %q, want /api/agon/api/pair-requests", r.URL.Path)
+		if r.URL.Path != "/deployment/api/agon/api/pair-requests" {
+			t.Errorf("request path = %q, want /deployment/api/agon/api/pair-requests", r.URL.Path)
 		}
 		headers <- r.Header.Clone()
 		w.Header().Set("Content-Type", "application/json")
@@ -29,7 +29,7 @@ func TestPairRequestSendsNativeHeaders(t *testing.T) {
 
 	configPath := filepath.Join(t.TempDir(), "agent.json")
 	cfg := &Config{
-		ServerURL:  server.URL + "/api/agon",
+		ServerURL:  server.URL + "/deployment/api/agon",
 		OwnerID:    "user_test",
 		DeviceName: "test-device",
 	}
@@ -85,12 +85,12 @@ func TestAgentWaitsForPairingApprovalThenConnects(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/agon/api/pair-requests":
+		case "/deployment/api/agon/api/pair-requests":
 			pairRequests.Add(1)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = w.Write([]byte(`{"status":"pending"}`))
-		case "/api/agon/agent":
+		case "/deployment/api/agon/agent":
 			attempt := connections.Add(1)
 			if attempt == 1 {
 				http.Error(w, "operator approval required", http.StatusUnauthorized)
@@ -123,7 +123,7 @@ func TestAgentWaitsForPairingApprovalThenConnects(t *testing.T) {
 	defer cancel()
 	result := make(chan error, 1)
 	cfg := Config{
-		ServerURL:  server.URL + "/api/agon",
+		ServerURL:  server.URL + "/deployment/api/agon",
 		OwnerID:    "user_test",
 		DeviceName: "pair-test",
 		Group:      "Unassigned",
@@ -175,7 +175,7 @@ func TestRunAgentReconnectsAfterAbruptSocketDrop(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/agon/agent" {
+		if r.URL.Path != "/deployment/api/agon/agent" {
 			http.NotFound(w, r)
 			return
 		}
@@ -223,7 +223,7 @@ func TestRunAgentReconnectsAfterAbruptSocketDrop(t *testing.T) {
 	defer cancel()
 	result := make(chan error, 1)
 	cfg := Config{
-		ServerURL:   server.URL + "/api/agon",
+		ServerURL:   server.URL + "/deployment/api/agon",
 		DeviceID:    "device-test",
 		DeviceToken: "device-secret",
 		DeviceName:  "test-device",

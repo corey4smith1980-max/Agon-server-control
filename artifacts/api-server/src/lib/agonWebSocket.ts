@@ -297,7 +297,10 @@ export function attachAgonWebSockets(server: HttpServer): void {
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url || "/", "http://localhost");
-    if (url.pathname !== "/api/agon/agent") {
+    if (
+      url.pathname !== "/api/agon/agent" &&
+      url.pathname !== "/deployment/api/agon/agent"
+    ) {
       rejectUpgrade(socket, 404);
       return;
     }

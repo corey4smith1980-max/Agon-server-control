@@ -1,4 +1,4 @@
 - [Agon Clerk React version isolation](agon-clerk-react-versions.md) — keep Clerk's React patch local; the shared workspace catalog is used by Expo.
-- [Hosted native agent pairing headers](agon-agent-request-header.md) — use the published root API path and `/deployment` only as its Referer.
+- [Hosted native agent pairing headers](agon-agent-request-header.md) — support both published API prefixes; send `/deployment` as the native agent Referer.
 - [Agon relay stability](agon-relay-stability.md) — bound reconnect retries, detect half-open WebSockets, and recover stale queued work.
 - [Agon hosted relay choice](agon-hosted-relay-choice.md) — use the custom WSS relay on Replit; it is not RustDesk-protocol compatible.
