@@ -1,0 +1,21 @@
+services:
+  control-plane:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      RELAY_ID: ${RELAY_ID:-local-relay}
+      ENROLLMENT_TOKEN: ${ENROLLMENT_TOKEN:?Set ENROLLMENT_TOKEN}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN}
+      ALLOW_ORIGIN: ${ALLOW_ORIGIN:?Set ALLOW_ORIGIN}
+      DATA_DIR: /data
+    volumes:
+      - control-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8787/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+volumes:
+  control-data:

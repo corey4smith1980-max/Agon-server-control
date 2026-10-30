@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Agon Server Control"
+description = "A secured server and device management console for authorized operators. Enrolls managed endpoints, monitors device health, reviews audit activity, and dispatches consent-aware allowlisted diagnostics through a self-hostable relay."
+version = "1.0.0"
+id = "artifacts/agon-control"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 26154
+
+[services.development]
+run = "pnpm --filter @workspace/agon-control run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/agon-control", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/agon-control/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "26154"
+BASE_PATH = "/"

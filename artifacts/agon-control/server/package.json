@@ -1,0 +1,13 @@
+{
+  "name": "agon-control-plane",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Consent-based remote device inventory, diagnostics and command relay",
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check server.mjs"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": { "ws": "^8.18.0" }
+}

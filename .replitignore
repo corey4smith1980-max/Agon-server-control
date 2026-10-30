@@ -3,3 +3,6 @@
 
 # No need to store the pnpm store twice.
 .local
+/.conversation/attached_assets/
+/artifacts/agon-control/public/agent/
+/artifacts/agon-control/public/downloads/agon-*.zip

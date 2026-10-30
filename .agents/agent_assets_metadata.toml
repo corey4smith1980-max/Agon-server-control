@@ -1,0 +1,30 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "xsTkLP6CKkY7UuvR7xDGo"
+uri = "file://artifacts/agon-control/dist/public/downloads/agon-agent-builds.zip"
+type = "unspecified"
+title = "Agon Native Agent Builds"
+description = "Checksummed Go binaries for Windows, macOS, Linux, and Android ARM64, with manifest and setup notes. These binaries are unconfigured; use the console deployment builder for a relay-configured installer."
+logical_id = "9f6f8039-9962-4560-a3ae-b34689ab0a07"
+content_hash = "sha256:9cd2fad9c1d57fdb764a2d6884c3868f3814c34d6952271861fb239c9eb8d8d0"
+size = 18210022
+mtime_ms = 1793372140284
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:c148beff-5115-469e-8a11-059707dabaa9/9f6f8039-9962-4560-a3ae-b34689ab0a07/4402a3b6-99f5-4a82-8bac-e510c93d43dc"
+storage_version_token = "1793372215383784"
+content_type = "application/octet-stream"
+
+[[outputs]]
+id = "AuFwwUCCtZQvqrppF1818"
+uri = "file://artifacts/agon-control/dist/public/downloads/agon-control-plane.zip"
+type = "unspecified"
+title = "Agon Relay Bundle"
+description = "Self-hostable Node.js relay with Docker Compose, required token and origin configuration, durable data volume, and setup guide."
+logical_id = "669e3091-86d8-4460-8a54-20befef2c8d6"
+content_hash = "sha256:5fd38c021355b38c4f63a9c4f78d8e5fe760bd22be416d529af9eb212e6bd5ed"
+size = 8478
+mtime_ms = 1793372132652
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:c148beff-5115-469e-8a11-059707dabaa9/669e3091-86d8-4460-8a54-20befef2c8d6/93f6c028-1d9b-4c38-ba8d-625a3141ef1d"
+storage_version_token = "1793372215971774"
+content_type = "application/octet-stream"
