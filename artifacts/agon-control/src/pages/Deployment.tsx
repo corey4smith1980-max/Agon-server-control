@@ -26,7 +26,7 @@ const platformMeta: Record<Platform, { title: string; subtitle: string; icon: ty
 }
 
 function windowsInstaller() {
-  return `# Agon Agent 1.0.1
+  return `# Agon Agent 1.0.2
 #Requires -RunAsAdministrator
 $ErrorActionPreference = "Stop"
 if (-not $PSCommandPath) {
@@ -37,7 +37,7 @@ $Agent = Join-Path $PackageRoot "agon-agent.exe"
 $Config = Join-Path $PackageRoot "agent.json"
 if (-not (Test-Path $Agent -PathType Leaf)) { throw "Agent binary not found: $Agent" }
 if (-not (Test-Path $Config -PathType Leaf)) { throw "Agent configuration not found: $Config" }
-Write-Host "Installing Agon Agent as a visible Windows service..." -ForegroundColor Cyan
+Write-Host "Installing Agon Agent service and visible desktop companion..." -ForegroundColor Cyan
  $priorNativeErrorPreference = $PSNativeCommandUseErrorActionPreference
 $PSNativeCommandUseErrorActionPreference = $false
 try {
@@ -64,7 +64,8 @@ if ($service.Status -ne "Running") {
   Start-Service -Name "AgonAgent"
   (Get-Service -Name "AgonAgent").WaitForStatus("Running", [TimeSpan]::FromSeconds(20))
 }
-Write-Host "Installed and running. Manage it in services.msc or run uninstall.ps1 to remove it." -ForegroundColor Green
+Write-Host "Installed. AgonAgent runs as a Windows service; Agon Desktop Companion opens visibly in this user session and at future sign-ins." -ForegroundColor Green
+Write-Host "Interactive desktop control always requires approval at the Windows desktop. The secure sign-in/UAC desktop is not shared." -ForegroundColor Yellow
 `
 }
 
@@ -73,6 +74,9 @@ function windowsUninstaller() {
 $ErrorActionPreference = "Stop"
 $Agent = "C:\\Program Files\\Agon\\agon-agent.exe"
 if (Test-Path $Agent) { & $Agent -uninstall -consent } else { sc.exe stop AgonAgent; sc.exe delete AgonAgent }
+Get-CimInstance Win32_Process -Filter "Name = 'agon-agent.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.CommandLine -like '*-companion*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Write-Host "Agon Agent service removed. Configuration is retained in C:\\ProgramData\\Agon."
 `
 }
@@ -178,13 +182,13 @@ export default function Deployment() {
       else { scripts['install.sh'] = unixInstaller(platform); scripts['uninstall.sh'] = unixUninstaller(platform) }
       Object.entries(scripts).forEach(([name, content]) => zip.file(name, content, { unixPermissions: name.endsWith('.sh') ? 0o755 : undefined }))
       const instructions = platform === 'windows'
-        ? '1. Extract this ZIP on the managed Windows device.\n2. Run the saved install.ps1 file as administrator.\n3. Copy the pairing code printed by the installer.\n4. Enter that code in Agon Control → Pending pairing approvals.\n5. Confirm AgonAgent is running in services.msc.\n\nThe agent requires explicit consent and does not install silently.'
+        ? '1. Extract this ZIP on the managed Windows device.\n2. Run the saved install.ps1 file as administrator.\n3. Copy the pairing code printed by the installer.\n4. Enter that code in Agon Control → Pending pairing approvals.\n5. Confirm AgonAgent is running in services.msc and keep the visible Agon Desktop Companion window open.\n\nEach desktop session requires approval in a Windows consent dialog. The secure sign-in/UAC desktop is not shared.'
         : platform === 'android'
           ? '1. Enable Android debugging through your approved MDM or device administrator workflow.\n2. Connect the device and run: sh install-android.sh\n3. Copy the pairing code printed by the installer.\n4. Enter that code in Agon Control → Pending pairing approvals.\n\nThis ARM64 package uses ADB. It is not an APK and does not bypass Android security. Boot persistence requires explicit MDM provisioning.'
           : `1. Extract this ZIP on the managed ${platformLabel(platform)} device.\n2. Open Terminal in the extracted folder.\n3. Run: sh install.sh\n4. Copy the pairing code printed by the installer.\n5. Enter that code in Agon Control → Pending pairing approvals.\n\nThe service and configuration paths are printed by the installer.`
       zip.file('INSTALL.txt', `Agon Agent 1.0.1\n${platformLabel(platform)} ${arch}\n\n${instructions}\n`)
       zip.file('SHA256SUMS', `${binaryHash}  ${binaryName}\n${configHash}  agent.json\n`)
-      zip.file('BUILD-RECEIPT.json', JSON.stringify({ product: 'Agon Agent', version: '1.0.1', platform, architecture: arch, builtAt: new Date().toISOString(), serverUrl, group, access, identity: 'device-generated', authorization: 'operator-approved-pairing-code', artifactSha256: binaryHash, capabilities: ['device-pairing', 'heartbeat', 'inventory.refresh', 'agent.ping', 'diagnostics.network', 'session.request'], excluded: ['arbitrary-shell', 'credential-collection', 'covert-persistence'] }, null, 2))
+      zip.file('BUILD-RECEIPT.json', JSON.stringify({ product: 'Agon Agent', version: '1.0.2', platform, architecture: arch, builtAt: new Date().toISOString(), serverUrl, group, access, identity: 'device-generated', authorization: 'operator-approved-pairing-code', artifactSha256: binaryHash, capabilities: ['device-pairing', 'heartbeat', 'inventory.refresh', 'agent.ping', 'diagnostics.network', ...(platform === 'windows' ? ['visible-desktop-companion', 'local-desktop-consent', 'desktop-view', 'pointer-input', 'keyboard-input'] : [])], excluded: ['arbitrary-shell', 'credential-collection', 'covert-persistence', 'secure-desktop-control'] }, null, 2))
       setProgress(38); setStage('Compressing installer package')
       const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } }, (metadata) => { setProgress(38 + metadata.percent * .57); setStage(`Compressing ${metadata.currentFile || 'package'}`) })
       const name = `agon-${platform}-${arch}-v1.0.1.zip`

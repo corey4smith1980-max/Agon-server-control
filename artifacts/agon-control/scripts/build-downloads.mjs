@@ -26,7 +26,7 @@ await Promise.all([
   mkdir(agentOutput, { recursive: true }),
   mkdir(publicAgentOutput, { recursive: true }),
 ]);
-const manifest = { version: '1.0.1', artifacts: [] };
+const manifest = { version: '1.0.2', artifacts: [] };
 
 for (const target of builds) {
   const filename = `agon-agent-${target.platform}-${target.arch}${target.extension}`;

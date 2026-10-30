@@ -37,9 +37,13 @@ type AgentMessage = {
   type?: string;
   jobId?: string;
   action?: string;
+  sessionId?: string;
   device?: AgentDeviceInfo;
   result?: unknown;
   error?: string;
+  jpeg?: string;
+  width?: number;
+  height?: number;
 };
 
 type DeviceConnection = {
@@ -48,9 +52,16 @@ type DeviceConnection = {
 };
 
 const connections = new Map<string, DeviceConnection>();
+const companionConnections = new Map<string, DeviceConnection>();
+const viewerConnections = new Map<string, { ownerId: string; socket: WebSocket }>();
+const activeDesktopSessions = new Map<string, { ownerId: string; deviceId: string }>();
 const requestContexts = new WeakMap<
   IncomingMessage,
-  { deviceId: string; ownerId: string }
+  { deviceId: string; ownerId: string; channel: "agent" | "companion" }
+>();
+const viewerContexts = new WeakMap<
+  IncomingMessage,
+  { sessionId: string; ownerId: string }
 >();
 
 function sha256(value: string): string {
@@ -118,10 +129,16 @@ async function completeJob(
   if (job.data.action === "session.request") {
     const payload = (job.data.payload ?? {}) as Record<string, unknown>;
     const sessionId = text(payload.sessionId);
+    const consentRequestId = text(payload.consentRequestId);
     const session = sessionId
       ? await getRecord(ownerId, "session", sessionId)
       : null;
-    if (session) {
+    if (
+      session &&
+      session.data.status !== "ended" &&
+      session.data.status !== "declined" &&
+      session.data.consentRequestId === consentRequestId
+    ) {
       const resultObject =
         result && typeof result === "object"
           ? (result as Record<string, unknown>)
@@ -129,8 +146,13 @@ async function completeJob(
       const status =
         failed || resultObject.consentRequired === true
           ? "consent_required"
+          : resultObject.declined === true
+            ? "declined"
           : resultObject.accepted === true
-            ? "accepted"
+            ? companionConnections.get(deviceId)?.ownerId === ownerId &&
+              companionConnections.get(deviceId)?.socket.readyState === WebSocket.OPEN
+              ? "active"
+              : "disconnected"
             : session.data.status;
       await saveRecord(ownerId, "session", session.id, {
         ...session.data,
@@ -140,6 +162,36 @@ async function completeJob(
           : result,
         updatedAt: completedAt,
       });
+      if (status === "active" && typeof session.data.deviceId === "string") {
+        activeDesktopSessions.set(session.id, {
+          ownerId,
+          deviceId: session.data.deviceId,
+        });
+        sendViewerStatus(session.id, "active");
+        const companion = companionConnections.get(session.data.deviceId);
+        if (companion?.ownerId === ownerId && companion.socket.readyState === WebSocket.OPEN) {
+          companion.socket.send(JSON.stringify({ type: "desktop_resume", sessionId: session.id }));
+        }
+      } else {
+        sendViewerStatus(session.id, status);
+      }
+      await addAudit(
+        ownerId,
+        status === "active"
+          ? "session.consent.accepted"
+          : status === "declined"
+            ? "session.consent.declined"
+            : status === "disconnected"
+              ? "session.disconnected"
+            : "session.consent.required",
+        {
+          sessionId: session.id,
+          deviceId,
+          code: session.data.code,
+        },
+        status === "active" ? "success" : "warning",
+        "Agon Endpoint",
+      );
     }
   }
 
@@ -161,14 +213,39 @@ async function sendQueuedJobs(
   ownerId: string,
   deviceId: string,
   socket: WebSocket,
+  channel: "agent" | "companion",
 ): Promise<void> {
-  if (dispatchingDevices.has(deviceId)) return;
-  dispatchingDevices.add(deviceId);
+  const dispatchKey = `${deviceId}:${channel}`;
+  if (dispatchingDevices.has(dispatchKey)) return;
+  dispatchingDevices.add(dispatchKey);
   try {
     const jobs = await listRecords(ownerId, "job", 1000);
     for (const job of jobs) {
       if (job.data.deviceId !== deviceId) continue;
       let jobData = job.data;
+      if (jobData.action === "session.request") {
+        const payload = (jobData.payload ?? {}) as Record<string, unknown>;
+        const sessionId = text(payload.sessionId);
+        const consentRequestId = text(payload.consentRequestId);
+        const session = sessionId
+          ? await getRecord(ownerId, "session", sessionId)
+          : null;
+        if (
+          !session ||
+          session.data.status !== "waiting" ||
+          session.data.consentRequestId !== consentRequestId
+        ) {
+          await saveRecord(ownerId, "job", job.id, {
+            ...jobData,
+            status: "failed",
+            progress: 100,
+            updatedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            error: "Consent request is no longer active.",
+          });
+          continue;
+        }
+      }
       if (jobData.status === "running") {
         const lastUpdate = Date.parse(String(jobData.updatedAt ?? ""));
         if (
@@ -187,6 +264,8 @@ async function sendQueuedJobs(
         await saveRecord(ownerId, "job", job.id, jobData);
       }
       if (jobData.status !== "queued") continue;
+      if (jobData.action === "session.request" && channel !== "companion") continue;
+      if (jobData.action !== "session.request" && channel === "companion") continue;
       if (socket.readyState !== WebSocket.OPEN) return;
 
       const updatedAt = new Date().toISOString();
@@ -232,7 +311,7 @@ async function sendQueuedJobs(
       }
     }
   } finally {
-    dispatchingDevices.delete(deviceId);
+    dispatchingDevices.delete(dispatchKey);
   }
 }
 
@@ -262,14 +341,42 @@ export async function queueAgonCommand(
   };
   await createRecord(ownerId, "job", job, id);
 
-  const connection = connections.get(deviceId);
-  if (connection?.ownerId === ownerId && connection.socket.readyState === WebSocket.OPEN) {
-    connection.socket.send(
-      JSON.stringify({ type: "command", jobId: id, action, payload }),
-    );
-    job.status = "running";
-    job.updatedAt = new Date().toISOString();
-    await saveRecord(ownerId, "job", id, job);
+  const channel = action === "session.request" ? "companion" : "agent";
+  const connection = channel === "companion"
+    ? companionConnections.get(deviceId)
+    : connections.get(deviceId);
+  const dispatchKey = `${deviceId}:${channel}`;
+  if (
+    connection?.ownerId === ownerId &&
+    connection.socket.readyState === WebSocket.OPEN &&
+    !dispatchingDevices.has(dispatchKey)
+  ) {
+    dispatchingDevices.add(dispatchKey);
+    try {
+      job.status = "running";
+      job.updatedAt = new Date().toISOString();
+      await saveRecord(ownerId, "job", id, job);
+      if (connection.socket.readyState === WebSocket.OPEN) {
+        connection.socket.send(
+          JSON.stringify({ type: "command", jobId: id, action, payload }),
+          (error) => {
+            if (!error) return;
+            void saveRecord(ownerId, "job", id, {
+              ...job,
+              status: "queued",
+              progress: 0,
+              updatedAt: new Date().toISOString(),
+            }).catch(() => undefined);
+          },
+        );
+      } else {
+        job.status = "queued";
+        job.updatedAt = new Date().toISOString();
+        await saveRecord(ownerId, "job", id, job);
+      }
+    } finally {
+      dispatchingDevices.delete(dispatchKey);
+    }
   }
 
   await addAudit(ownerId, "job.created", { jobId: id, deviceId, action });
@@ -277,10 +384,70 @@ export async function queueAgonCommand(
 }
 
 export function disconnectAgonDevice(deviceId: string): void {
-  const connection = connections.get(deviceId);
-  if (!connection) return;
-  connections.delete(deviceId);
-  connection.socket.close(4003, "Device access revoked");
+  for (const [map, connection] of [
+    [connections, connections.get(deviceId)],
+    [companionConnections, companionConnections.get(deviceId)],
+  ] as const) {
+    if (!connection) continue;
+    map.delete(deviceId);
+    connection.socket.close(4003, "Device access revoked");
+  }
+  for (const [sessionId, session] of activeDesktopSessions) {
+    if (session.deviceId !== deviceId) continue;
+    activeDesktopSessions.delete(sessionId);
+    viewerConnections.get(sessionId)?.socket.send(
+      JSON.stringify({ type: "session_status", status: "disconnected" }),
+    );
+  }
+}
+
+export function isAgonCompanionConnected(deviceId: string): boolean {
+  return companionConnections.get(deviceId)?.socket.readyState === WebSocket.OPEN;
+}
+
+export function hasOtherActiveDesktopSession(deviceId: string, sessionId: string): boolean {
+  return [...activeDesktopSessions.entries()].some(
+    ([activeSessionId, active]) =>
+      active.deviceId === deviceId && activeSessionId !== sessionId,
+  );
+}
+
+export function endAgonDesktopSession(sessionId: string, deviceId: string): void {
+  activeDesktopSessions.delete(sessionId);
+  const companion = companionConnections.get(deviceId);
+  if (companion?.socket.readyState === WebSocket.OPEN) {
+    companion.socket.send(JSON.stringify({ type: "session_stop", sessionId }));
+  }
+  const viewer = viewerConnections.get(sessionId);
+  if (viewer) {
+    viewerConnections.delete(sessionId);
+    viewer.socket.send(JSON.stringify({ type: "session_status", status: "ended" }));
+    viewer.socket.close(1000, "Support session ended");
+  }
+}
+
+function validDesktopInput(message: Record<string, unknown>): boolean {
+  if (message.event === "pointer") {
+    return ["move", "down", "up"].includes(String(message.kind)) &&
+      typeof message.x === "number" && Number.isFinite(message.x) &&
+      message.x >= 0 && message.x <= 1 &&
+      typeof message.y === "number" && Number.isFinite(message.y) &&
+      message.y >= 0 && message.y <= 1 &&
+      ["left", "right", "middle", undefined].includes(message.button as string | undefined);
+  }
+  return message.event === "key" &&
+    typeof message.key === "string" && message.key.length <= 24 &&
+    typeof message.down === "boolean";
+}
+
+function sendViewerStatus(sessionId: string, status: string): void {
+  const viewer = viewerConnections.get(sessionId);
+  if (viewer?.socket.readyState !== WebSocket.OPEN) return;
+  try {
+    viewer.socket.send(JSON.stringify({ type: "session_status", status }));
+  } catch {
+    viewer.socket.terminate();
+  }
 }
 
 function rejectUpgrade(socket: Duplex, status: number): void {
@@ -292,22 +459,47 @@ function rejectUpgrade(socket: Duplex, status: number): void {
 export function attachAgonWebSockets(server: HttpServer): void {
   const webSockets = new WebSocketServer({
     noServer: true,
-    maxPayload: 64 * 1024,
+    maxPayload: 1_500_000,
     perMessageDeflate: false,
   });
 
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url || "/", "http://localhost");
-    if (
-      url.pathname !== "/api/agon/agent" &&
-      url.pathname !== "/deployment/api/agon/agent"
-    ) {
+    const isAgentPath = url.pathname === "/api/agon/agent" ||
+      url.pathname === "/deployment/api/agon/agent";
+    const isViewerPath = url.pathname === "/api/agon/viewer" ||
+      url.pathname === "/deployment/api/agon/viewer";
+    if (!isAgentPath && !isViewerPath) {
       rejectUpgrade(socket, 404);
       return;
     }
 
     void (async () => {
+      if (isViewerPath) {
+        const sessionId = url.searchParams.get("sessionId") || "";
+        const token = url.searchParams.get("token") || "";
+        const session = sessionId ? await getRecordById("session", sessionId) : null;
+        const expiresAt = Date.parse(String(session?.data.viewerTokenExpiresAt ?? ""));
+        if (
+          !session ||
+          !token ||
+          expiresAt <= Date.now() ||
+          !matchesHash(token, session.data.viewerTokenHash)
+        ) {
+          rejectUpgrade(socket, 401);
+          return;
+        }
+        viewerContexts.set(request, { sessionId, ownerId: session.ownerId });
+        webSockets.handleUpgrade(request, socket, head, (webSocket) => {
+          webSockets.emit("connection", webSocket, request);
+        });
+        return;
+      }
+
       const deviceId = url.searchParams.get("deviceId") || "";
+      const channel = url.searchParams.get("channel") === "companion"
+        ? "companion"
+        : "agent";
       const bearer = request.headers.authorization?.replace(/^Bearer\s+/i, "") || "";
       const record = deviceId
         ? await getRecordById("device", deviceId)
@@ -317,7 +509,7 @@ export function attachAgonWebSockets(server: HttpServer): void {
         return;
       }
 
-      requestContexts.set(request, { deviceId, ownerId: record.ownerId });
+      requestContexts.set(request, { deviceId, ownerId: record.ownerId, channel });
       webSockets.handleUpgrade(request, socket, head, (webSocket) => {
         webSockets.emit("connection", webSocket, request);
       });
@@ -326,16 +518,112 @@ export function attachAgonWebSockets(server: HttpServer): void {
 
   webSockets.on("connection", (socket, request) => {
     const context = requestContexts.get(request);
-    if (!context) {
-      socket.close(1008, "Invalid device credentials");
+    const viewerContext = viewerContexts.get(request);
+    if (!context && !viewerContext) {
+      socket.close(1008, "Invalid connection credentials");
       return;
     }
-    const { deviceId, ownerId } = context;
+    if (viewerContext) {
+      const { sessionId, ownerId } = viewerContext;
+      const previousViewer = viewerConnections.get(sessionId);
+      if (previousViewer) previousViewer.socket.close(4001, "Viewer reconnected");
+      viewerConnections.set(sessionId, { ownerId, socket });
+      const active = activeDesktopSessions.get(sessionId);
+      if (active?.ownerId === ownerId) {
+        const companion = companionConnections.get(active.deviceId);
+        if (companion?.ownerId === ownerId && companion.socket.readyState === WebSocket.OPEN) {
+          companion.socket.send(JSON.stringify({ type: "desktop_resume", sessionId }));
+        }
+      }
+      void getRecord(ownerId, "session", sessionId).then((session) => {
+        if (!session || socket.readyState !== WebSocket.OPEN) return;
+        const status = String(session.data.status ?? "waiting");
+        const actualStatus = activeDesktopSessions.has(sessionId)
+          ? "active"
+          : status === "active" ? "disconnected" : status;
+        socket.send(JSON.stringify({
+          type: "session_status",
+          status: actualStatus,
+        }));
+      }).catch(() => undefined);
+
+      let lastPointerInputAt = 0;
+      socket.on("message", (raw, isBinary) => {
+        if (isBinary) {
+          socket.close(1003, "Text JSON messages required");
+          return;
+        }
+        if (raw.length > 2048) {
+          socket.close(1009, "Desktop input message too large");
+          return;
+        }
+        let message: Record<string, unknown>;
+        try {
+          const parsed: unknown = JSON.parse(raw.toString());
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+          message = parsed as Record<string, unknown>;
+        } catch {
+          socket.close(1007, "Invalid JSON message");
+          return;
+        }
+        if (
+          message.type !== "desktop_input" ||
+          message.sessionId !== sessionId ||
+          !validDesktopInput(message) ||
+          !activeDesktopSessions.has(sessionId)
+        ) return;
+        if (message.event === "pointer" && message.kind === "move") {
+          const now = Date.now();
+          if (now - lastPointerInputAt < 20) return;
+          lastPointerInputAt = now;
+        }
+        const active = activeDesktopSessions.get(sessionId);
+        const companion = active && companionConnections.get(active.deviceId);
+        if (
+          active?.ownerId !== ownerId ||
+          !companion ||
+          companion.ownerId !== ownerId ||
+          companion.socket.readyState !== WebSocket.OPEN
+        ) return;
+        companion.socket.send(JSON.stringify({
+          type: "desktop_input",
+          sessionId,
+          payload: {
+            event: message.event,
+            kind: message.kind,
+            x: message.x,
+            y: message.y,
+            button: message.button,
+            key: message.key,
+            down: message.down,
+          },
+        }));
+      });
+      socket.on("close", () => {
+        if (viewerConnections.get(sessionId)?.socket === socket) {
+          viewerConnections.delete(sessionId);
+          const active = activeDesktopSessions.get(sessionId);
+          const companion = active && companionConnections.get(active.deviceId);
+          if (
+            active?.ownerId === ownerId &&
+            companion?.ownerId === ownerId &&
+            companion.socket.readyState === WebSocket.OPEN
+          ) {
+            companion.socket.send(JSON.stringify({ type: "desktop_pause", sessionId }));
+          }
+        }
+      });
+      socket.on("error", () => socket.close());
+      return;
+    }
+
+    const { deviceId, ownerId, channel } = context;
     const logDeviceId = deviceId.slice(0, 8);
-    const previous = connections.get(deviceId);
+    const connectionMap = channel === "companion" ? companionConnections : connections;
+    const previous = connectionMap.get(deviceId);
     if (previous && previous.socket !== socket) previous.socket.close(4001, "Reconnected");
-    connections.set(deviceId, { ownerId, socket });
-    logger.info({ deviceId: logDeviceId }, "Agon agent WebSocket connected");
+    connectionMap.set(deviceId, { ownerId, socket });
+    logger.info({ deviceId: logDeviceId, channel }, "Agon agent WebSocket connected");
     let awaitingPong = false;
     const pingTimer = setInterval(() => {
       if (socket.readyState !== WebSocket.OPEN) return;
@@ -354,11 +642,13 @@ export function attachAgonWebSockets(server: HttpServer): void {
       awaitingPong = false;
     });
 
-    void updateHeartbeat(ownerId, deviceId).catch((err: unknown) => {
-      logger.error({ err, deviceId: logDeviceId }, "Initial Agon heartbeat update failed");
-    });
-    void sendQueuedJobs(ownerId, deviceId, socket).catch((err: unknown) => {
-      logger.error({ err, deviceId: logDeviceId }, "Initial Agon job dispatch failed");
+    if (channel === "agent") {
+      void updateHeartbeat(ownerId, deviceId).catch((err: unknown) => {
+        logger.error({ err, deviceId: logDeviceId }, "Initial Agon heartbeat update failed");
+      });
+    }
+    void sendQueuedJobs(ownerId, deviceId, socket, channel).catch((err: unknown) => {
+      logger.error({ err, deviceId: logDeviceId, channel }, "Initial Agon job dispatch failed");
     });
 
     let messageQueue = Promise.resolve();
@@ -385,7 +675,8 @@ export function attachAgonWebSockets(server: HttpServer): void {
       if (
         message.type !== "hello" &&
         message.type !== "heartbeat" &&
-        message.type !== "command_result"
+        message.type !== "command_result" &&
+        message.type !== "desktop_frame"
       ) {
         logger.warn(
           { deviceId: logDeviceId, messageType: message.type ?? "missing" },
@@ -396,12 +687,36 @@ export function attachAgonWebSockets(server: HttpServer): void {
       }
 
       messageQueue = messageQueue.then(async () => {
-        if (message.type === "hello") {
+        if (message.type === "desktop_frame") {
+          if (
+            channel !== "companion" ||
+            typeof message.sessionId !== "string" ||
+            typeof message.jpeg !== "string" ||
+            message.jpeg.length > 1_350_000
+          ) return;
+          const active = activeDesktopSessions.get(message.sessionId);
+          const viewer = viewerConnections.get(message.sessionId);
+          if (
+            active?.ownerId !== ownerId ||
+            active.deviceId !== deviceId ||
+            !viewer ||
+            viewer.ownerId !== ownerId ||
+            viewer.socket.readyState !== WebSocket.OPEN
+          ) return;
+          viewer.socket.send(JSON.stringify({
+            type: "desktop_frame",
+            sessionId: message.sessionId,
+            jpeg: message.jpeg,
+            width: message.width,
+            height: message.height,
+          }));
+        } else if (message.type === "hello") {
           await updateHeartbeat(ownerId, deviceId, message.device);
         } else if (message.type === "heartbeat") {
-          await updateHeartbeat(ownerId, deviceId, message.device);
-          await sendQueuedJobs(ownerId, deviceId, socket);
+          if (channel === "agent") await updateHeartbeat(ownerId, deviceId, message.device);
+          await sendQueuedJobs(ownerId, deviceId, socket, channel);
         } else {
+          if (connectionMap.get(deviceId)?.socket !== socket) return;
           await completeJob(ownerId, deviceId, message);
         }
       }).catch((err: unknown) => {
@@ -420,17 +735,37 @@ export function attachAgonWebSockets(server: HttpServer): void {
         { deviceId: logDeviceId, closeCode: code, closeReason: reason.toString().slice(0, 120) },
         "Agon agent WebSocket closed",
       );
-      if (connections.get(deviceId)?.socket !== socket) return;
-      connections.delete(deviceId);
-      void (async () => {
-        const record = await getRecord(ownerId, "device", deviceId);
-        if (record) {
-          await saveRecord(ownerId, "device", deviceId, {
-            ...record.data,
-            online: false,
+      if (connectionMap.get(deviceId)?.socket !== socket) return;
+      connectionMap.delete(deviceId);
+      if (channel === "agent") {
+        void (async () => {
+          const record = await getRecord(ownerId, "device", deviceId);
+          if (record) {
+            await saveRecord(ownerId, "device", deviceId, {
+              ...record.data,
+              online: false,
+            });
+          }
+        })();
+      } else {
+        for (const [sessionId, active] of activeDesktopSessions) {
+        if (active.deviceId !== deviceId || active.ownerId !== ownerId) continue;
+        activeDesktopSessions.delete(sessionId);
+        sendViewerStatus(sessionId, "disconnected");
+        void getRecord(ownerId, "session", sessionId).then(async (session) => {
+          if (!session || session.data.status !== "active") return;
+          const updatedAt = new Date().toISOString();
+          await saveRecord(ownerId, "session", sessionId, {
+            ...session.data,
+            status: "disconnected",
+            updatedAt,
           });
+          await addAudit(ownerId, "session.disconnected", { sessionId, deviceId }, "warning", "Agon Agent");
+        }).catch((err: unknown) => {
+          logger.warn({ err, deviceId: logDeviceId }, "Could not mark interrupted desktop session");
+        });
         }
-      })();
+      }
     });
 
     socket.on("error", (err) => {

@@ -1,6 +1,6 @@
 export type Platform = 'windows' | 'macos' | 'linux' | 'android'
 export type DeviceStatus = 'online' | 'idle' | 'offline' | 'attention'
-export type SessionStatus = 'active' | 'waiting' | 'ended' | 'declined' | 'consent_required'
+export type SessionStatus = 'active' | 'waiting' | 'ended' | 'declined' | 'consent_required' | 'disconnected'
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'awaiting relay'
 export type AuditSeverity = 'info' | 'success' | 'warning' | 'critical'
 

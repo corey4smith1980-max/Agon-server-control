@@ -26,6 +26,8 @@ interface StoreValue {
   updateDevice: (id: string, patch: Partial<Device>) => void
   removeDevices: (ids: string[]) => void
   createSession: (input: SessionInput) => Promise<SupportSession>
+  connectSession: (id: string) => Promise<{ viewerToken: string }>
+  endSession: (id: string) => Promise<void>
   updateSession: (id: string, patch: Partial<SupportSession>) => void
   runJob: (action: Job['action'], deviceIds: string[], name?: string) => Promise<void>
   addRelay: (relay: Pick<Relay, 'name' | 'region' | 'city' | 'url'>) => void
@@ -168,6 +170,30 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
     toast('Support session created', `${session.code} · ${session.deviceName}`)
     return session
   }, [devices, setSessions, toast])
+
+  const connectSession = useCallback(async (id: string) => {
+    const response = await fetch(`/api/agon/sessions/${encodeURIComponent(id)}/connect`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.error || `Could not connect to endpoint (HTTP ${response.status})`)
+    if (typeof data.viewerToken !== 'string') throw new Error('The relay did not return a viewer authorization.')
+    setSessions((items) => items.map((session) => session.id === id ? { ...session, status: 'waiting' } : session))
+    return { viewerToken: data.viewerToken as string }
+  }, [setSessions])
+
+  const endSession = useCallback(async (id: string) => {
+    const response = await fetch(`/api/agon/sessions/${encodeURIComponent(id)}/end`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.error || `Could not end session (HTTP ${response.status})`)
+    setSessions((items) => items.map((session) => session.id === id ? { ...session, status: 'ended' } : session))
+  }, [setSessions])
 
   const runJob = useCallback(async (action: Job['action'], deviceIds: string[], name?: string) => {
     const selected = devices.filter((device) => deviceIds.includes(device.id))
@@ -327,9 +353,9 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
         return {
           id: String(session.id), code: String(session.code || 'Pending'), customer: String(session.customer || 'Operator request'),
           customerEmail: '', deviceId, deviceName: deviceNames.get(deviceId) || deviceId || 'Unknown device',
-          issue: String(session.issue || 'Consent and endpoint-policy status request.'), status: statusValue === 'accepted'
-            ? 'active' : statusValue === 'consent_required' ? 'consent_required' : statusValue === 'declined'
-              ? 'declined' : statusValue === 'ended' || statusValue === 'expired' ? 'ended' : 'waiting',
+          issue: String(session.issue || 'Consent and endpoint-policy status request.'), status: statusValue === 'active' || statusValue === 'accepted'
+            ? 'active' : statusValue === 'consent_required' ? 'consent_required' : statusValue === 'disconnected'
+              ? 'disconnected' : statusValue === 'declined' ? 'declined' : statusValue === 'ended' || statusValue === 'expired' ? 'ended' : 'waiting',
           technician: 'Relay operator', startedAt,
           durationMinutes: Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 60_000)),
           access: session.mode === 'unattended' ? 'unattended' : 'interactive',
@@ -413,9 +439,9 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
 
   const value = useMemo<StoreValue>(() => ({
     userId, devices, sessions, relays, jobs, audit, settings, toasts, syncing,
-    updateSettings, updateDevice, removeDevices, createSession, updateSession, runJob,
+    updateSettings, updateDevice, removeDevices, createSession, connectSession, endSession, updateSession, runJob,
     addRelay, removeRelay, testRelay, syncControlPlane, addAudit, toast, dismissToast, resetWorkspace,
-  }), [userId, devices, sessions, relays, jobs, audit, settings, toasts, syncing, updateSettings, updateDevice, removeDevices, createSession, updateSession, runJob, addRelay, removeRelay, testRelay, syncControlPlane, addAudit, toast, dismissToast, resetWorkspace])
+  }), [userId, devices, sessions, relays, jobs, audit, settings, toasts, syncing, updateSettings, updateDevice, removeDevices, createSession, connectSession, endSession, updateSession, runJob, addRelay, removeRelay, testRelay, syncControlPlane, addAudit, toast, dismissToast, resetWorkspace])
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
 }

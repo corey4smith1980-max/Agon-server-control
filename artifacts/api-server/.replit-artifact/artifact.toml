@@ -7,7 +7,7 @@ id = "3B4_FFSkEVBkAeYMFRJ2e"
 [[services]]
 localPort = 8080
 name = "API Server"
-paths = ["/api", "/deployment/api/agon", "/deployment/api/agon/agent"]
+paths = ["/api", "/deployment/api/agon", "/deployment/api/agon/agent", "/api/agon/viewer", "/deployment/api/agon/viewer"]
 
 [services.development]
 run = "pnpm --filter @workspace/api-server run dev"

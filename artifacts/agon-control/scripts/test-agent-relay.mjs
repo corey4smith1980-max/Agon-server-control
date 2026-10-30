@@ -155,6 +155,8 @@ try {
     'if ($agentExitCode -ne 0)',
     'Get-Service -Name "AgonAgent"',
     'Start-Service -Name "AgonAgent"',
+    'Agon Desktop Companion',
+    'visible Agon Desktop Companion window',
   ]) {
     assert(installerSource.includes(required), `Windows installer is missing required check: ${required}`);
   }

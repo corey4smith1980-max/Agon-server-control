@@ -12,7 +12,13 @@ import {
 } from "@workspace/api-zod";
 import { pool } from "@workspace/db";
 import { addAudit, createRecord, getRecord, getRecordById, listRecords } from "../lib/agonStore";
-import { disconnectAgonDevice, queueAgonCommand } from "../lib/agonWebSocket";
+import {
+  disconnectAgonDevice,
+  endAgonDesktopSession,
+  hasOtherActiveDesktopSession,
+  isAgonCompanionConnected,
+  queueAgonCommand,
+} from "../lib/agonWebSocket";
 
 const router = Router();
 const allowedActions = new Set([
@@ -39,6 +45,13 @@ function ownerId(response: Parameters<RequestHandler>[1]): string {
 function cleanText(value: unknown, limit: number, fallback = ""): string {
   if (typeof value !== "string") return fallback;
   return value.trim().replace(/\0/g, "").slice(0, limit);
+}
+
+function withoutViewerCredentials(data: Record<string, unknown>): Record<string, unknown> {
+  const safe = { ...data };
+  delete safe.viewerTokenHash;
+  delete safe.viewerTokenExpiresAt;
+  return safe;
 }
 
 function hashToken(token: string): string {
@@ -342,7 +355,7 @@ router.get("/jobs", async (_request, response) => {
 router.get("/sessions", async (_request, response) => {
   const sessions = await listRecords(ownerId(response), "session", 1000);
   response.setHeader("Cache-Control", "no-store");
-  response.json({ sessions: sessions.map(({ id, data }) => ({ ...data, id })) });
+  response.json({ sessions: sessions.map(({ id, data }) => ({ ...withoutViewerCredentials(data), id })) });
 });
 
 router.get("/audit", async (request, response) => {
@@ -383,7 +396,7 @@ router.post("/sessions", async (request, response) => {
   const customer = cleanText(request.body?.customer, 120);
   const issue = cleanText(request.body?.issue, 2000);
   const deviceId = cleanText(request.body?.deviceId, 80);
-  const mode = request.body?.mode === "unattended" ? "unattended" : "interactive";
+  const mode = "interactive";
   if (!customer || !issue) {
     response.status(400).json({ error: "Customer and issue are required." });
     return;
@@ -409,14 +422,6 @@ router.post("/sessions", async (request, response) => {
     createdAt: new Date().toISOString(),
   };
   await createRecord(owner, "session", session, id);
-  if (device) {
-    await queueAgonCommand(owner, device.id, "session.request", {
-      sessionId: id,
-      mode,
-      customer,
-      issue,
-    });
-  }
   await addAudit(owner, "session.requested", {
     sessionId: id,
     deviceId: device?.id ?? null,
@@ -424,6 +429,111 @@ router.post("/sessions", async (request, response) => {
     code,
   });
   response.status(201).json({ session: { ...session, id } });
+});
+
+router.post("/sessions/:sessionId/connect", async (request, response): Promise<void> => {
+  const owner = ownerId(response);
+  const sessionId = cleanText(request.params.sessionId, 80);
+  const session = await getRecord(owner, "session", sessionId);
+  if (!session) {
+    response.status(404).json({ error: "Support session not found." });
+    return;
+  }
+  if (session.data.status === "ended" || session.data.status === "declined") {
+    response.status(409).json({ error: "This support session is already closed." });
+    return;
+  }
+  const deviceId = typeof session.data.deviceId === "string" ? session.data.deviceId : "";
+  if (!deviceId) {
+    response.status(409).json({ error: "Choose a managed endpoint before connecting." });
+    return;
+  }
+  if (!isAgonCompanionConnected(deviceId)) {
+    response.status(409).json({
+      error: "The visible Windows desktop companion is not connected. Install the current agent package and keep its companion window open.",
+    });
+    return;
+  }
+  if (hasOtherActiveDesktopSession(deviceId, session.id)) {
+    response.status(409).json({
+      error: "Another live desktop session is already controlling this endpoint. End it before starting a second session.",
+    });
+    return;
+  }
+  endAgonDesktopSession(session.id, deviceId);
+
+  const token = randomBytes(32).toString("base64url");
+  const consentRequestId = randomUUID();
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+  const updatedSession = {
+    ...session.data,
+    status: "waiting",
+    consentRequestId,
+    viewerTokenHash: hashToken(token),
+    viewerTokenExpiresAt: expiresAt,
+    updatedAt: new Date().toISOString(),
+  };
+  await pool.query(
+    `UPDATE agon_records SET data = $1::jsonb, updated_at = NOW()
+     WHERE id = $2 AND owner_id = $3 AND kind = 'session'`,
+    [JSON.stringify(updatedSession), session.id, owner],
+  );
+
+  const job = await queueAgonCommand(owner, deviceId, "session.request", {
+    sessionId: session.id,
+    consentRequestId,
+    code: String(session.data.code ?? ""),
+    customer: String(session.data.customer ?? ""),
+    issue: String(session.data.issue ?? ""),
+    technician: String(session.data.actor ?? "Operator"),
+  });
+  if (!job) {
+    response.status(502).json({ error: "Could not send the consent request to the desktop companion." });
+    return;
+  }
+  await addAudit(owner, "session.connect_requested", {
+    sessionId: session.id,
+    deviceId,
+    code: session.data.code,
+  });
+  response.setHeader("Cache-Control", "no-store");
+  response.json({
+    sessionId: session.id,
+    viewerToken: token,
+    viewerTokenExpiresAt: expiresAt,
+  });
+});
+
+router.post("/sessions/:sessionId/end", async (request, response): Promise<void> => {
+  const owner = ownerId(response);
+  const sessionId = cleanText(request.params.sessionId, 80);
+  const session = await getRecord(owner, "session", sessionId);
+  if (!session) {
+    response.status(404).json({ error: "Support session not found." });
+    return;
+  }
+  const deviceId = typeof session.data.deviceId === "string" ? session.data.deviceId : "";
+  const endedAt = new Date().toISOString();
+  await pool.query(
+    `UPDATE agon_records SET data = $1::jsonb, updated_at = NOW()
+     WHERE id = $2 AND owner_id = $3 AND kind = 'session'`,
+    [JSON.stringify({
+      ...session.data,
+      status: "ended",
+      consentRequestId: null,
+      viewerTokenHash: null,
+      viewerTokenExpiresAt: null,
+      endedAt,
+      updatedAt: endedAt,
+    }), session.id, owner],
+  );
+  if (deviceId) endAgonDesktopSession(session.id, deviceId);
+  await addAudit(owner, "session.ended", {
+    sessionId: session.id,
+    deviceId: deviceId || null,
+    code: session.data.code,
+  });
+  response.json({ session: { ...withoutViewerCredentials(session.data), status: "ended", endedAt } });
 });
 
 export default router;

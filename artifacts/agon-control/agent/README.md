@@ -1,10 +1,12 @@
 # Agon endpoint agent
 
-Version 1.0.1 — consent-based inventory and diagnostics for managed devices.
+Version 1.0.2 — consent-based endpoint inventory, diagnostics, and Windows interactive desktop support.
 
 ## What the agent does
 
-The agent makes an outbound TLS WebSocket connection to the relay URL in `agent.json`. On first setup it creates a stable device ID and a random device credential locally, then prints a pairing code. The credential remains inactive until an operator enters that code in the console. It reports basic host inventory and responds only to four allowlisted operations: ping, inventory refresh, network-interface diagnostics, and support-session authorization. It does not provide arbitrary shell execution, credential collection, hidden startup, screen capture, or input injection.
+The service agent makes an outbound TLS WebSocket connection to the relay URL in `agent.json`. On first setup it creates a stable device ID and a random device credential locally, then prints a pairing code. The credential remains inactive until an operator enters that code in the console. The service reports basic host inventory and diagnostics.
+
+On Windows, the installer also starts a separate, visible desktop companion in the signed-in user's session and configures it to start visibly at future sign-ins. The companion opens a local consent dialog for every interactive session. Only after approval does it stream a bounded desktop view and accept allowlisted pointer and keyboard events. Closing the companion disconnects it. Secure sign-in and UAC desktops are not shared. Other platforms currently remain inventory/diagnostics only.
 
 ## Interactive run
 
@@ -18,7 +20,7 @@ Stop with Ctrl+C. The endpoint must use HTTPS/WSS except for localhost developme
 
 Use the generated package from the console. It contains the right binary, configuration, and installer. Service installation always requires `-consent` and elevated privileges where applicable.
 
-- Windows: `install.ps1` registers a real Windows service named `AgonAgent`.
+- Windows: `install.ps1` registers a real Windows service named `AgonAgent` and adds the visible user-session companion to the current user's startup.
 - Linux: `install.sh` installs a hardened systemd unit running as the `agonagent` system user.
 - macOS: `install.sh` installs a LaunchDaemon visible as `com.agon.agent`.
 - Android: `install-android.sh` uses ADB to place and start the ARM64 binary. Production boot persistence must be granted explicitly by your MDM; no covert persistence is configured.
@@ -46,4 +48,4 @@ From the workspace root, run:
 pnpm --filter @workspace/agon-control run test:relay
 ```
 
-This cross-builds the Linux agent and Windows x64 executable, checks the published API target and key Windows installer guards, then runs the Linux agent against an isolated real relay through pairing, approval, WebSocket connection, and relay restart recovery. Replit validation captures each run's output for error tracking. This is not a Windows VM test: it cannot verify Windows Service Control Manager behavior without an actual Windows VM.
+This cross-builds the Linux agent and Windows x64 executable, checks the published API target and key Windows installer guards, then runs the Linux agent against an isolated real relay through pairing, approval, WebSocket connection, and relay restart recovery. Replit validation captures each run's output for error tracking. This is not a Windows VM test: it cannot verify Windows Service Control Manager, desktop capture, consent dialog, or input behavior without an actual Windows VM.

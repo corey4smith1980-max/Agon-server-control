@@ -29,7 +29,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const agentVersion = "1.0.1"
+const agentVersion = "1.0.2"
 
 type Config struct {
 	ServerURL        string `json:"serverUrl"`
@@ -56,15 +56,29 @@ type DeviceInfo struct {
 	BootID     string `json:"bootId"`
 }
 
+type DesktopInput struct {
+	Event  string  `json:"event"`
+	Kind   string  `json:"kind"`
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Button string  `json:"button"`
+	Key    string  `json:"key"`
+	Down   bool    `json:"down"`
+}
+
 type Envelope struct {
-	Type    string          `json:"type"`
-	JobID   string          `json:"jobId,omitempty"`
-	Action  string          `json:"action,omitempty"`
-	Payload json.RawMessage `json:"payload,omitempty"`
-	Device  *DeviceInfo     `json:"device,omitempty"`
-	Result  any             `json:"result,omitempty"`
-	Error   string          `json:"error,omitempty"`
-	SentAt  time.Time       `json:"sentAt"`
+	Type      string          `json:"type"`
+	JobID     string          `json:"jobId,omitempty"`
+	Action    string          `json:"action,omitempty"`
+	SessionID string          `json:"sessionId,omitempty"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
+	Device    *DeviceInfo     `json:"device,omitempty"`
+	Result    any             `json:"result,omitempty"`
+	Error     string          `json:"error,omitempty"`
+	JPEG      string          `json:"jpeg,omitempty"`
+	Width     int             `json:"width,omitempty"`
+	Height    int             `json:"height,omitempty"`
+	SentAt    time.Time       `json:"sentAt"`
 }
 
 type socketClient struct {
@@ -90,6 +104,7 @@ func main() {
 	pair := flag.Bool("pair", false, "create device identity and request operator approval")
 	install := flag.Bool("install", false, "install as a visible operating system service")
 	uninstall := flag.Bool("uninstall", false, "stop and remove the operating system service")
+	companion := flag.Bool("companion", false, "run the visible user-session desktop companion")
 	consent := flag.Bool("consent", false, "confirm that you own or administer this device and consent to installation")
 	showVersion := flag.Bool("version", false, "print agent version")
 	flag.Parse()
@@ -142,6 +157,16 @@ func main() {
 		cfg.Group = "Unassigned"
 	}
 
+	if *companion {
+		if cfg.DeviceID == "" || cfg.DeviceToken == "" {
+			log.Fatal("desktop companion requires an installed device identity; run install.ps1 first")
+		}
+		log.Printf("Agon visible desktop companion starting for %s; close this window to disconnect", cfg.DeviceName)
+		if err := runAgentChannel(context.Background(), cfg, *configPath, "companion"); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if *pair {
 		if _, err := requestPairing(&cfg, *configPath); err != nil {
 			log.Fatal(err)
@@ -333,6 +358,10 @@ func requestPairing(cfg *Config, configPath string) (string, error) {
 }
 
 func runAgent(ctx context.Context, cfg Config, configPath string) error {
+	return runAgentChannel(ctx, cfg, configPath, "agent")
+}
+
+func runAgentChannel(ctx context.Context, cfg Config, configPath, channel string) error {
 	if err := validateServer(cfg.ServerURL); err != nil {
 		return err
 	}
@@ -340,12 +369,15 @@ func runAgent(ctx context.Context, cfg Config, configPath string) error {
 	for {
 		connectionStarted := time.Time{}
 		newIdentity := cfg.DeviceID == "" || cfg.DeviceToken == ""
+		if channel == "companion" && newIdentity {
+			return errors.New("desktop companion requires an installed device identity")
+		}
 		if cfg.DeviceID == "" || cfg.DeviceToken == "" {
 			if err := ensureDeviceIdentity(&cfg); err != nil {
 				return err
 			}
 		}
-		if !cfg.PairingRequested && (newIdentity || cfg.OwnerID != "") {
+		if channel == "agent" && !cfg.PairingRequested && (newIdentity || cfg.OwnerID != "") {
 			if _, err := requestPairing(&cfg, configPath); err != nil {
 				log.Printf("device pairing: %v", err)
 				goto retry
@@ -353,7 +385,7 @@ func runAgent(ctx context.Context, cfg Config, configPath string) error {
 		}
 		{
 			connectionStarted = time.Now()
-			err := runConnection(ctx, &cfg, configPath)
+			err := runConnection(ctx, &cfg, configPath, channel)
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -387,7 +419,7 @@ func runAgent(ctx context.Context, cfg Config, configPath string) error {
 
 var errAwaitingApproval = errors.New("device is waiting for operator approval")
 
-func runConnection(ctx context.Context, cfg *Config, configPath string) error {
+func runConnection(ctx context.Context, cfg *Config, configPath, channel string) error {
 	if err := validateServer(cfg.ServerURL); err != nil {
 		return err
 	}
@@ -407,6 +439,7 @@ func runConnection(ctx context.Context, cfg *Config, configPath string) error {
 	u.Path = strings.TrimRight(u.Path, "/") + "/agent"
 	q := u.Query()
 	q.Set("deviceId", cfg.DeviceID)
+	q.Set("channel", channel)
 	u.RawQuery = q.Encode()
 	dialer := websocket.Dialer{HandshakeTimeout: 15 * time.Second, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
 	headers := http.Header{}
@@ -422,7 +455,7 @@ func runConnection(ctx context.Context, cfg *Config, configPath string) error {
 		return err
 	}
 	defer conn.Close()
-	conn.SetReadLimit(64 * 1024)
+	conn.SetReadLimit(1_500_000)
 	const pongWait = 70 * time.Second
 	if err := conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
 		return err
@@ -431,9 +464,11 @@ func runConnection(ctx context.Context, cfg *Config, configPath string) error {
 		return conn.SetReadDeadline(time.Now().Add(pongWait))
 	})
 	client := &socketClient{conn: conn}
-	info := currentDeviceInfo(*cfg)
-	if err := client.send(Envelope{Type: "hello", Device: &info}); err != nil {
-		return err
+	if channel == "agent" {
+		info := currentDeviceInfo(*cfg)
+		if err := client.send(Envelope{Type: "hello", Device: &info}); err != nil {
+			return err
+		}
 	}
 	if cfg.PairingCode != "" {
 		cfg.PairingCode = ""
@@ -441,7 +476,7 @@ func runConnection(ctx context.Context, cfg *Config, configPath string) error {
 			log.Printf("could not clear pairing code from config: %v", err)
 		}
 	}
-	log.Printf("connected to relay; device=%s", cfg.DeviceID)
+	log.Printf("connected to relay; device=%s channel=%s", cfg.DeviceID, channel)
 
 	connectionCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -457,8 +492,14 @@ func runConnection(ctx context.Context, cfg *Config, configPath string) error {
 			case <-connectionCtx.Done():
 				return
 			case <-ticker.C:
-				current := currentDeviceInfo(*cfg)
-				if err := client.send(Envelope{Type: "heartbeat", Device: &current}); err != nil {
+				var heartbeat Envelope
+				if channel == "agent" {
+					current := currentDeviceInfo(*cfg)
+					heartbeat = Envelope{Type: "heartbeat", Device: &current}
+				} else {
+					heartbeat = Envelope{Type: "heartbeat"}
+				}
+				if err := client.send(heartbeat); err != nil {
 					cancel()
 					return
 				}
@@ -466,12 +507,88 @@ func runConnection(ctx context.Context, cfg *Config, configPath string) error {
 		}
 	}()
 
+	var desktopMu sync.Mutex
+	var activeDesktopSession string
+	var stopDesktop context.CancelFunc
+	var pauseDesktop chan bool
+	var consentMu sync.Mutex
+	var pendingConsentSession string
+	defer func() {
+		consentMu.Lock()
+		pendingConsentSession = ""
+		consentMu.Unlock()
+		cancelDesktopConsent()
+		desktopMu.Lock()
+		if stopDesktop != nil {
+			stopDesktop()
+		}
+		desktopMu.Unlock()
+	}()
 	for {
 		var message Envelope
 		if err := conn.ReadJSON(&message); err != nil {
 			return err
 		}
 		if message.Type == "command" {
+			if channel == "companion" && message.Action == "session.request" {
+				var request struct {
+					SessionID  string `json:"sessionId"`
+					Code       string `json:"code"`
+					Customer   string `json:"customer"`
+					Issue      string `json:"issue"`
+					Technician string `json:"technician"`
+				}
+				if err := json.Unmarshal(message.Payload, &request); err != nil || request.SessionID == "" {
+					_ = client.send(Envelope{Type: "command_result", JobID: message.JobID, Action: message.Action, Error: "Invalid desktop session request"})
+					continue
+				}
+				consentMu.Lock()
+				if pendingConsentSession != "" {
+					consentMu.Unlock()
+					_ = client.send(Envelope{Type: "command_result", JobID: message.JobID, Action: message.Action, Error: "Another local consent prompt is already open"})
+					continue
+				}
+				pendingConsentSession = request.SessionID
+				consentMu.Unlock()
+				go func() {
+					accepted, consentErr := confirmDesktopConsent(request.Customer, request.Technician, request.Issue, request.Code)
+					consentMu.Lock()
+					stillPending := pendingConsentSession == request.SessionID
+					if stillPending {
+						pendingConsentSession = ""
+					}
+					consentMu.Unlock()
+					if !stillPending || connectionCtx.Err() != nil {
+						return
+					}
+					result := map[string]any{"accepted": accepted}
+					if !accepted && consentErr == nil {
+						result["declined"] = true
+					}
+					response := Envelope{Type: "command_result", JobID: message.JobID, Action: message.Action, Result: result}
+					if consentErr != nil {
+						response.Error = consentErr.Error()
+					}
+					if err := client.send(response); err != nil || !accepted {
+						return
+					}
+					desktopMu.Lock()
+					if stopDesktop != nil {
+						stopDesktop()
+					}
+					sessionCtx, stop := context.WithCancel(connectionCtx)
+					stopDesktop = stop
+					activeDesktopSession = request.SessionID
+					pauseDesktop = make(chan bool, 1)
+					pauseDesktop <- true
+					pauseSignal := pauseDesktop
+					desktopMu.Unlock()
+					go streamDesktopSession(sessionCtx, client, request.SessionID, pauseSignal)
+					log.Printf("local user approved interactive support session %s", request.SessionID)
+					log.Printf("*** DESKTOP SHARING ACTIVE: session %s; close this visible companion window to disconnect. ***", request.SessionID)
+				}()
+				continue
+			}
 			result, commandErr := executeAllowlisted(message.Action, *cfg)
 			response := Envelope{Type: "command_result", JobID: message.JobID, Action: message.Action, Result: result}
 			if commandErr != nil {
@@ -479,6 +596,82 @@ func runConnection(ctx context.Context, cfg *Config, configPath string) error {
 			}
 			if err := client.send(response); err != nil {
 				return err
+			}
+		} else if channel == "companion" && message.Type == "session_stop" {
+			consentMu.Lock()
+			cancelConsent := message.SessionID == pendingConsentSession
+			if message.SessionID == pendingConsentSession {
+				pendingConsentSession = ""
+			}
+			consentMu.Unlock()
+			if cancelConsent {
+				cancelDesktopConsent()
+			}
+			desktopMu.Lock()
+			if message.SessionID == activeDesktopSession {
+				if stopDesktop != nil {
+					stopDesktop()
+				}
+				stopDesktop = nil
+				pauseDesktop = nil
+				activeDesktopSession = ""
+				log.Printf("desktop sharing ended for session %s", message.SessionID)
+			}
+			desktopMu.Unlock()
+		} else if channel == "companion" && message.Type == "desktop_input" {
+			desktopMu.Lock()
+			isActive := message.SessionID != "" && message.SessionID == activeDesktopSession
+			desktopMu.Unlock()
+			if isActive {
+				var input DesktopInput
+				if err := json.Unmarshal(message.Payload, &input); err == nil {
+					_ = applyDesktopInput(input)
+				}
+			}
+		} else if channel == "companion" && (message.Type == "desktop_pause" || message.Type == "desktop_resume") {
+			desktopMu.Lock()
+			if message.SessionID == activeDesktopSession && pauseDesktop != nil {
+				paused := message.Type == "desktop_pause"
+				select {
+				case pauseDesktop <- paused:
+				default:
+					select {
+					case <-pauseDesktop:
+					default:
+					}
+					pauseDesktop <- paused
+				}
+			}
+			desktopMu.Unlock()
+		}
+	}
+}
+
+func streamDesktopSession(ctx context.Context, client *socketClient, sessionID string, pause <-chan bool) {
+	ticker := time.NewTicker(750 * time.Millisecond)
+	defer ticker.Stop()
+	paused := true
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case paused = <-pause:
+		case <-ticker.C:
+			if paused {
+				continue
+			}
+			frame, width, height, err := captureDesktopJPEG()
+			if err != nil {
+				log.Printf("desktop capture: %v", err)
+				continue
+			}
+			message := Envelope{
+				Type: "desktop_frame", SessionID: sessionID,
+				JPEG:  base64.StdEncoding.EncodeToString(frame),
+				Width: width, Height: height,
+			}
+			if err := client.send(message); err != nil {
+				return
 			}
 		}
 	}

@@ -21,7 +21,7 @@ export function NewSessionModal() {
       const id = (event as CustomEvent<{ deviceId?: string }>).detail?.deviceId || ''
       setDeviceId(id)
       const device = devices.find((item) => item.id === id)
-      setAccess(device?.access || 'interactive')
+      setAccess('interactive')
       if (device) setCustomer(device.group)
       setCreatedCode('')
       setOpen(true)
@@ -38,7 +38,7 @@ export function NewSessionModal() {
   const chooseDevice = (id: string) => {
     setDeviceId(id)
     const device = devices.find((item) => item.id === id)
-    if (device) { setAccess(device.access); if (!customer) setCustomer(device.group) }
+    if (device) { setAccess('interactive'); if (!customer) setCustomer(device.group) }
   }
 
   const submit = async (event: FormEvent) => {
@@ -58,7 +58,7 @@ export function NewSessionModal() {
     toast('Invitation copied', 'Share it with the customer through your trusted support channel.')
   }
 
-  return <Modal open={open} onClose={close} title={createdCode ? 'Support request created' : 'Create support request'} description={createdCode ? 'Share the request code through a trusted channel.' : 'Create a consent or endpoint-policy record. The request code does not provide desktop access.'}>
+  return <Modal open={open} onClose={close} title={createdCode ? 'Support request created' : 'Create support request'} description={createdCode ? 'Share the request code through a trusted channel.' : 'Create a support request for a managed endpoint. Desktop access always requires local user consent.'}>
     {createdCode ? <div className="p-6">
       <div className="subtle-grid relative overflow-hidden rounded-2xl border border-lime-300/15 bg-lime-300/[0.035] px-6 py-8 text-center">
         <div className="mx-auto mb-5 flex h-11 w-11 items-center justify-center rounded-xl bg-lime-300 text-[#15200c]"><Check size={22} /></div>
@@ -66,7 +66,7 @@ export function NewSessionModal() {
         <button onClick={copyCode} className="font-mono text-2xl font-medium tracking-[0.08em] text-lime-200 transition hover:text-lime-100 sm:text-3xl">{createdCode}</button>
         <p className="mt-3 text-xs text-slate-500">Use your trusted support channel to coordinate customer consent.</p>
       </div>
-      <div className="mt-4 flex items-start gap-3 rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><ShieldCheck size={18} className="mt-0.5 shrink-0 text-cyan-300" /><p className="text-xs leading-5 text-slate-400">Interactive requests require endpoint user consent. Unattended requests are evaluated against installed endpoint policy. Agon reports request authorization only; it does not provide remote desktop, screen capture, keyboard or mouse control, or live chat.</p></div>
+      <div className="mt-4 flex items-start gap-3 rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><ShieldCheck size={18} className="mt-0.5 shrink-0 text-cyan-300" /><p className="text-xs leading-5 text-slate-400">The Windows companion presents a separate local approval prompt. Screen and input sharing begin only after the endpoint user approves. Secure sign-in and UAC desktops are not shared.</p></div>
       <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><Button onClick={close}>Done</Button><Button variant="primary" icon={Copy} onClick={copyInvite}>Copy invitation</Button></div>
     </div> : <form onSubmit={submit} className="space-y-5 p-6">
       <div className="grid gap-4 sm:grid-cols-2">
@@ -79,7 +79,7 @@ export function NewSessionModal() {
         <span className="label">Access mode</span>
         <div className="grid gap-3 sm:grid-cols-2">
           <button type="button" onClick={() => setAccess('interactive')} className={`rounded-xl border p-4 text-left transition ${access === 'interactive' ? 'border-lime-300/40 bg-lime-300/[0.055]' : 'border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]'}`}><div className="flex items-center justify-between"><Headset size={18} className={access === 'interactive' ? 'text-lime-300' : 'text-slate-500'} />{access === 'interactive' && <Badge tone="green">Selected</Badge>}</div><p className="mt-3 text-sm font-medium text-white">Interactive</p><p className="mt-1 text-xs leading-5 text-slate-500">Endpoint user approves each session.</p></button>
-          <button type="button" onClick={() => setAccess('unattended')} disabled={selected?.access === 'interactive'} className={`rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-40 ${access === 'unattended' ? 'border-lime-300/40 bg-lime-300/[0.055]' : 'border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]'}`}><div className="flex items-center justify-between"><ShieldCheck size={18} className={access === 'unattended' ? 'text-lime-300' : 'text-slate-500'} />{access === 'unattended' && <Badge tone="green">Selected</Badge>}</div><p className="mt-3 text-sm font-medium text-white">Unattended</p><p className="mt-1 text-xs leading-5 text-slate-500">{selected?.access === 'interactive' ? 'Blocked by this endpoint’s policy.' : 'Requires prior administrator authorization.'}</p></button>
+          <button type="button" disabled className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4 text-left opacity-50"><div className="flex items-center justify-between"><ShieldCheck size={18} className="text-slate-500" /><Badge tone="neutral">Not available</Badge></div><p className="mt-3 text-sm font-medium text-white">Unattended</p><p className="mt-1 text-xs leading-5 text-slate-500">Not enabled in this interactive-control milestone.</p></button>
         </div>
       </div>
       <div className="flex items-center justify-end gap-2 border-t border-white/[0.07] pt-5"><Button type="button" onClick={close}>Cancel</Button><Button type="submit" variant="primary" disabled={submitting}>{submitting ? <LoadingLabel>Creating</LoadingLabel> : 'Create request'}</Button></div>
