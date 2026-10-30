@@ -127,7 +127,7 @@ export function Scene01() {
             cy="280"
             r="6"
             fill={LIME}
-            initial={{ opacity: 0 }}
+            initial={{ cx: 112, opacity: 0 }}
             animate={{ cx: [112, 380, 648, 380], opacity: [0, 1, 1, 0] }}
             transition={{ delay: 3.2, duration: 1.25, ease: 'easeInOut' }}
           />
@@ -382,7 +382,7 @@ export function Scene04() {
           <circle cx="126" cy="280" r="7" fill="#2c3931" />
           <circle cx="280" cy="280" r="9" fill="#8ca96c" />
           <circle cx="434" cy="280" r="6" fill="#b58d58" />
-          <motion.circle cx="126" cy="280" r="7" fill="#c4f36a" initial={{ opacity: 0 }} animate={{ cx: [126, 280, 434, 280], opacity: [0, 1, 1, 0] }} transition={{ delay: 1.8, duration: 1.4, ease: 'easeInOut' }} />
+          <motion.circle cx="126" cy="280" r="7" fill="#c4f36a" initial={{ cx: 126, opacity: 0 }} animate={{ cx: [126, 280, 434, 280], opacity: [0, 1, 1, 0] }} transition={{ delay: 1.8, duration: 1.4, ease: 'easeInOut' }} />
         </svg>
         <div className="absolute left-[7%] top-[59%] font-mono text-[.9vmin] tracking-[.13em] text-[#59655b]">CONSOLE</div>
         <div className="absolute left-[44%] top-[59%] font-mono text-[.9vmin] tracking-[.13em] text-[#59655b]">RELAY</div>
