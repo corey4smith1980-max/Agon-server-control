@@ -1,6 +1,6 @@
 import JSZip from 'jszip'
 import { motion } from 'framer-motion'
-import { Apple, Check, Clipboard, CloudDownload, Code2, Copy, Download, FileCheck2, KeyRound, Laptop, LoaderCircle, PackageCheck, PackagePlus, RefreshCw, Server, ShieldCheck, Smartphone, Terminal } from 'lucide-react'
+import { Apple, Check, CloudDownload, Code2, Copy, Download, FileCheck2, Laptop, LoaderCircle, PackageCheck, PackagePlus, Server, ShieldCheck, Smartphone, Terminal } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { Platform } from '../lib/types'
 import { artifactPath, cn, copyText, formatBytes, platformLabel } from '../lib/utils'
@@ -84,10 +84,9 @@ async function sha256(value: string | ArrayBuffer) {
 }
 
 export default function Deployment() {
-  const { settings, updateSettings, regenerateEnrollmentToken, addAudit, toast } = useAppStore()
+  const { settings, addAudit, toast } = useAppStore()
   const [platform, setPlatform] = useState<Platform>('windows')
   const [arch, setArch] = useState('amd64')
-  const [serverUrl, setServerUrl] = useState(settings.controlPlaneUrl || 'http://localhost:8787')
   const [group, setGroup] = useState(settings.defaultGroup)
   const [access, setAccess] = useState<'interactive' | 'unattended'>('interactive')
   const [manifest, setManifest] = useState<Artifact[]>([])
@@ -108,12 +107,9 @@ export default function Deployment() {
     setStage('')
   }
   const artifact = useMemo(() => manifest.find((item) => item.platform === platform && item.arch === arch), [manifest, platform, arch])
-  const validUrl = useMemo(() => {
-    try { const url = new URL(serverUrl); return ['https:', 'http:'].includes(url.protocol) && (url.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(url.hostname)) } catch { return false }
-  }, [serverUrl])
 
   const buildPackage = async () => {
-    if (!artifact || !validUrl || !settings.enrollmentToken) return
+    if (!artifact) return
     setBuilding(true); setProgress(4); setPackageInfo(null)
     try {
       setStage('Fetching verified native agent')
@@ -122,8 +118,28 @@ export default function Deployment() {
       const binary = await response.arrayBuffer()
       const binaryHash = await sha256(binary)
       if (binaryHash !== artifact.sha256) throw new Error('Agent checksum mismatch. Package generation stopped.')
-      setProgress(24); setStage('Writing enrollment and endpoint policy')
-      const config = JSON.stringify({ serverUrl: serverUrl.replace(/\/$/, ''), enrollmentToken: settings.enrollmentToken, deviceName: '', group, allowUnattended: access === 'unattended' }, null, 2) + '\n'
+      setProgress(24); setStage('Issuing one-time installer enrollment')
+      const enrollmentResponse = await fetch('/api/agon/enrollment-tokens', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceName: 'Agon managed device',
+          group,
+          allowUnattended: access === 'unattended',
+        }),
+      })
+      const enrollment = await enrollmentResponse.json()
+      if (!enrollmentResponse.ok) {
+        throw new Error(enrollment.error || 'Could not issue an installer credential')
+      }
+      const serverUrl = String(enrollment.serverUrl)
+      const enrollmentToken = String(enrollment.enrollmentToken)
+      if (!serverUrl.startsWith('https://') || !enrollmentToken) {
+        throw new Error('The hosted control plane returned an invalid installer configuration')
+      }
+      setProgress(31); setStage('Writing enrollment and endpoint policy')
+      const config = JSON.stringify({ serverUrl, enrollmentToken, deviceName: '', group, allowUnattended: access === 'unattended' }, null, 2) + '\n'
       const configHash = await sha256(config)
       const zip = new JSZip()
       const binaryName = platform === 'windows' ? 'agon-agent.exe' : 'agon-agent'
@@ -141,7 +157,7 @@ export default function Deployment() {
           : `1. Extract this ZIP on the managed ${platformLabel(platform)} device.\n2. Open Terminal in the extracted folder.\n3. Run: sh install.sh\n4. Approve the administrator prompt and verify the service in the console.\n\nThe service and configuration paths are printed by the installer.`
       zip.file('INSTALL.txt', `Agon Agent 1.0.0\n${platformLabel(platform)} ${arch}\n\n${instructions}\n`)
       zip.file('SHA256SUMS', `${binaryHash}  ${binaryName}\n${configHash}  agent.json\n`)
-      zip.file('BUILD-RECEIPT.json', JSON.stringify({ product: 'Agon Agent', version: '1.0.0', platform, architecture: arch, builtAt: new Date().toISOString(), serverUrl, group, access, artifactSha256: binaryHash, enrollmentTokenSha256: await sha256(settings.enrollmentToken), capabilities: ['enrollment', 'heartbeat', 'inventory.refresh', 'agent.ping', 'diagnostics.network', 'session.request'], excluded: ['arbitrary-shell', 'credential-collection', 'covert-persistence'] }, null, 2))
+      zip.file('BUILD-RECEIPT.json', JSON.stringify({ product: 'Agon Agent', version: '1.0.0', platform, architecture: arch, builtAt: new Date().toISOString(), serverUrl, group, access, enrollmentExpiresAt: enrollment.expiresAt, enrollmentUseLimit: enrollment.useLimit, artifactSha256: binaryHash, enrollmentTokenSha256: await sha256(enrollmentToken), capabilities: ['enrollment', 'heartbeat', 'inventory.refresh', 'agent.ping', 'diagnostics.network', 'session.request'], excluded: ['arbitrary-shell', 'credential-collection', 'covert-persistence'] }, null, 2))
       setProgress(38); setStage('Compressing installer package')
       const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } }, (metadata) => { setProgress(38 + metadata.percent * .57); setStage(`Compressing ${metadata.currentFile || 'package'}`) })
       const name = `agon-${platform}-${arch}-v1.0.0.zip`
@@ -149,7 +165,7 @@ export default function Deployment() {
       const packageHash = await sha256(await blob.arrayBuffer())
       setPackageInfo({ name, blob, sha: packageHash, size: blob.size }); setProgress(100); setStage('Package ready')
       const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = name; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 3000)
-      addAudit({ action: 'installer.generated', actor: 'Alex Morgan', target: `${platformLabel(platform)} · ${arch}`, category: 'deployment', severity: 'success', detail: `${name} generated with ${access} access for ${group}. Native agent checksum verified before packaging.`, ip: 'This browser' })
+      addAudit({ action: 'installer.generated', actor: 'Operator', target: `${platformLabel(platform)} · ${arch}`, category: 'deployment', severity: 'success', detail: `${name} generated with ${access} access for ${group}. Native agent checksum verified before packaging.`, ip: 'This browser' })
       toast('Installer built and downloaded', `${name} · ${formatBytes(blob.size)}`)
     } catch (error) {
       setStage('Build failed'); toast('Installer build failed', error instanceof Error ? error.message : 'Unknown packaging error', 'error')
@@ -161,10 +177,8 @@ export default function Deployment() {
     const url = URL.createObjectURL(packageInfo.blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = packageInfo.name; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 3000)
   }
   const copy = async (value: string, label: string) => { await copyText(value); toast(`${label} copied`) }
-  const serverCommand = `cp .env.example .env\n# Set unique 32+ character tokens and the exact console origin in .env\nvi .env\ndocker compose up --build -d`
-
   return <div>
-    <PageHeader eyebrow="Real artifacts · Agent v1.0.0" title="Agent deployment" description="Download native binaries or build a configured installer around checksum-verified agents. Installation requires administrator consent." actions={<><Button icon={Download} onClick={() => { const anchor = document.createElement('a'); anchor.href = artifactPath('downloads/agon-agent-builds.zip'); anchor.download = ''; anchor.click() }}>Agent builds ZIP</Button><Button icon={Code2} onClick={() => { const anchor = document.createElement('a'); anchor.href = artifactPath('downloads/agon-agent-source.zip'); anchor.download = ''; anchor.click() }}>Agent source</Button><Button icon={Server} onClick={() => { const anchor = document.createElement('a'); anchor.href = artifactPath('downloads/agon-control-plane.zip'); anchor.download = ''; anchor.click() }}>Relay bundle</Button></>} />
+    <PageHeader eyebrow="Real artifacts · Agent v1.0.0" title="Agent deployment" description="Download native binaries or build a configured installer around checksum-verified agents. Installation requires administrator consent." actions={<><Button icon={Download} onClick={() => { const anchor = document.createElement('a'); anchor.href = artifactPath('downloads/agon-agent-builds.zip'); anchor.download = ''; anchor.click() }}>Agent builds ZIP</Button><Button icon={Code2} onClick={() => { const anchor = document.createElement('a'); anchor.href = artifactPath('downloads/agon-agent-source.zip'); anchor.download = ''; anchor.click() }}>Agent source</Button></>} />
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,.8fr)]">
       <div className="space-y-4">
         <Panel className="p-5 sm:p-6">
@@ -173,9 +187,8 @@ export default function Deployment() {
           <div className="mt-5 grid gap-4 sm:grid-cols-2"><div><label className="label" htmlFor="deploy-arch">Processor architecture</label><select id="deploy-arch" className="input" value={arch} onChange={(event) => { setArch(event.target.value); setPackageInfo(null) }}>{platformMeta[platform].arches.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></div><div><label className="label" htmlFor="deploy-group">Enrollment group</label><select id="deploy-group" className="input" value={group} onChange={(event) => setGroup(event.target.value)}>{['Unassigned', 'Infrastructure', 'Engineering', 'People', 'Sales', 'Marketing', 'Executive', 'Retail', 'Field Ops', 'Finance'].map((item) => <option key={item}>{item}</option>)}</select></div></div>
         </Panel>
         <Panel className="p-5 sm:p-6">
-          <span className="eyebrow">02 · Enrollment</span><h2 className="mt-2 font-display text-base font-semibold text-white">Connect to your control plane</h2><p className="mt-1 text-[11px] leading-5 text-slate-500">Agents make outbound connections only. No inbound endpoint firewall rule is required.</p>
-          <div className="mt-5"><label className="label" htmlFor="deploy-server">Relay URL</label><div className="relative"><Server size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600"/><input id="deploy-server" className="input pl-9 font-mono text-[11px]" value={serverUrl} onChange={(event) => { setServerUrl(event.target.value); setPackageInfo(null) }} placeholder="https://relay.yourcompany.com"/></div>{!validUrl && <p className="mt-2 text-[10px] text-amber-300">Use HTTPS, or HTTP only for localhost development.</p>}</div>
-          <div className="mt-4"><div className="flex items-center justify-between"><label className="label" htmlFor="deploy-token">Enrollment token</label><button onClick={() => { regenerateEnrollmentToken(); setPackageInfo(null) }} className="mb-1.5 flex items-center gap-1 text-[10px] text-slate-500 hover:text-lime-300"><RefreshCw size={11}/>Rotate</button></div><div className="flex gap-2"><div className="relative flex-1"><KeyRound size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600"/><input id="deploy-token" type="password" className="input pl-9 pr-16 font-mono text-[11px]" value={settings.enrollmentToken} onChange={(event) => { updateSettings({ enrollmentToken: event.target.value }); setPackageInfo(null) }}/><button onClick={() => copy(settings.enrollmentToken, 'Enrollment token')} className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] text-slate-500 hover:text-white">COPY</button></div></div><p className="mt-2 text-[10px] leading-4 text-slate-600">This token must match ENROLLMENT_TOKEN on the target relay. It is exchanged for a unique device credential on first launch.</p></div>
+          <span className="eyebrow">02 · Enrollment</span><h2 className="mt-2 font-display text-base font-semibold text-white">Connect automatically</h2><p className="mt-1 text-[11px] leading-5 text-slate-500">The hosted relay URL and a one-use enrollment credential are embedded when you build each installer.</p>
+          <div className="mt-5 rounded-xl border border-white/[0.06] bg-black/15 p-4"><div className="flex items-center gap-2 text-[11px] font-medium text-slate-200"><Server size={14} className="text-lime-300"/>Agon hosted control plane</div><p className="mt-2 break-all font-mono text-[10px] text-slate-500">{window.location.origin}/api/agon</p><p className="mt-2 text-[10px] leading-4 text-slate-600">No relay URL, administrator token or enrollment token needs manual setup. The generated credential expires in 24 hours and can enroll one device.</p></div>
           <div className="mt-5 flex items-center justify-between gap-4 rounded-xl border border-white/[0.07] bg-white/[0.022] p-4"><div><p className="text-[12px] font-medium text-slate-200">Authorize unattended diagnostics</p><p className="mt-1 max-w-md text-[10px] leading-4 text-slate-500">Allows pre-authorized support requests. Leave off to require interactive endpoint approval.</p></div><Toggle checked={access === 'unattended'} onChange={(checked) => { setAccess(checked ? 'unattended' : 'interactive'); setPackageInfo(null) }} label="Allow unattended diagnostics"/></div>
         </Panel>
       </div>
@@ -188,15 +201,12 @@ export default function Deployment() {
             {building && <div className="mt-4"><div className="mb-2 flex items-center justify-between text-[10px]"><span className="flex items-center gap-2 text-slate-400"><LoaderCircle size={12} className="animate-spin"/>{stage}</span><span className="font-mono text-lime-300">{Math.round(progress)}%</span></div><div className="h-1 overflow-hidden rounded-full bg-white/[0.06]"><motion.div className="h-full bg-lime-300" animate={{ width: `${progress}%` }}/></div></div>}
             {packageInfo && <motion.div className="mt-4 rounded-xl border border-lime-300/15 bg-lime-300/[0.04] p-4" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}><div className="flex items-center gap-2 text-[11px] font-medium text-lime-200"><PackageCheck size={15}/>Build verified</div><p className="mt-2 break-all font-mono text-[9px] text-slate-500">{packageInfo.name}</p><div className="mt-3 flex items-center justify-between text-[9px] text-slate-500"><span>{formatBytes(packageInfo.size)}</span><button onClick={downloadAgain} className="text-lime-300 hover:text-lime-200">Download again</button></div></motion.div>}
             {manifestError && <p className="mt-3 text-[10px] text-rose-300">{manifestError}</p>}
-            <Button variant="primary" size="lg" className="mt-5 w-full" icon={building ? LoaderCircle : CloudDownload} disabled={building || !artifact || !validUrl || !settings.enrollmentToken} onClick={buildPackage}>{building ? 'Building native package…' : packageInfo ? 'Rebuild & download' : 'Build & download installer'}</Button>
-            <p className="mt-3 flex items-start gap-2 text-[9px] leading-4 text-slate-600"><ShieldCheck size={12} className="mt-0.5 shrink-0"/>Build runs locally in your browser. The server URL and enrollment token are not uploaded to a packaging service.</p>
+            <Button variant="primary" size="lg" className="mt-5 w-full" icon={building ? LoaderCircle : CloudDownload} disabled={building || !artifact} onClick={buildPackage}>{building ? 'Building native package…' : packageInfo ? 'Build another installer' : 'Build & download installer'}</Button>
+            <p className="mt-3 flex items-start gap-2 text-[9px] leading-4 text-slate-600"><ShieldCheck size={12} className="mt-0.5 shrink-0"/>The agent binary is checksum-verified. A unique single-use enrollment token is issued by the signed-in control plane and included in the downloaded ZIP.</p>
           </div>
         </Panel>
         {platform === 'android' && <Panel className="border-amber-300/10 bg-amber-300/[0.02] p-4"><div className="flex gap-3"><Smartphone size={17} className="shrink-0 text-amber-300"/><div><p className="text-[11px] font-medium text-amber-100">Android deployment scope</p><p className="mt-1 text-[10px] leading-5 text-slate-500">This is a real ARM64 agent for MDM/ADB-managed devices, not an APK. Android boot persistence requires explicit device-owner provisioning.</p></div></div></Panel>}
       </div>
     </div>
-    <Panel className="mt-4 overflow-hidden">
-      <div className="grid lg:grid-cols-[1fr_1.2fr]"><div className="border-b border-white/[0.07] p-5 sm:p-6 lg:border-b-0 lg:border-r"><div className="flex items-center gap-3"><div className="rounded-xl bg-cyan-300/[0.07] p-2.5 text-cyan-300"><Server size={20}/></div><div><h2 className="font-display text-base font-semibold text-white">Self-host the relay</h2><p className="mt-1 text-[10px] text-slate-500">Node.js 20+ or Docker · persistent JSON store</p></div></div><p className="mt-4 max-w-md text-[11px] leading-5 text-slate-500">The downloadable server includes enrollment, hashed device credentials, WebSocket relay, allowlisted jobs, audit events, health checks and a production Docker Compose file.</p><div className="mt-5 flex flex-wrap gap-2"><Button icon={Download} onClick={() => { const anchor = document.createElement('a'); anchor.href = artifactPath('downloads/agon-control-plane.zip'); anchor.download = ''; anchor.click() }}>Download server ZIP</Button><Button icon={Clipboard} onClick={() => copy(serverCommand, 'Docker command')}>Copy Docker command</Button></div></div><div className="bg-black/20 p-5 sm:p-6"><div className="flex items-center justify-between"><p className="font-mono text-[9px] uppercase tracking-wider text-slate-600">Quick start · from the extracted server directory</p><button onClick={() => copy(serverCommand, 'Docker command')} className="text-slate-600 hover:text-white"><Copy size={13}/></button></div><pre className="scroll-area mt-4 overflow-x-auto font-mono text-[10px] leading-6 text-slate-400"><code><span className="text-slate-600"># Set separate 32+ character tokens and the exact console origin</span>{'\n'}cp .env.example .env{'\n'}vi .env{'\n'}docker compose up --build -d{'\n\n'}<span className="text-slate-600"># Verify relay health over HTTPS</span>{'\n'}curl https://relay.yourcompany.com/health</code></pre></div></div>
-    </Panel>
   </div>
 }

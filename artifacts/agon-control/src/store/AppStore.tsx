@@ -1,8 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { initialAudit, initialDevices, initialJobs, initialRelays, initialSessions, initialSettings } from '../lib/data'
+import { initialSettings } from '../lib/data'
 import type { AppSettings, AuditEvent, Device, Job, Platform, Relay, SupportSession, ToastMessage } from '../lib/types'
-import { randomToken, sessionCode } from '../lib/utils'
 
 interface SessionInput {
   customer: string
@@ -21,9 +20,7 @@ interface StoreValue {
   audit: AuditEvent[]
   settings: AppSettings
   toasts: ToastMessage[]
-  adminToken: string
   syncing: boolean
-  setAdminToken: (token: string) => void
   updateSettings: (patch: Partial<AppSettings>) => void
   updateDevice: (id: string, patch: Partial<Device>) => void
   removeDevices: (ids: string[]) => void
@@ -33,8 +30,7 @@ interface StoreValue {
   addRelay: (relay: Pick<Relay, 'name' | 'region' | 'city' | 'url'>) => void
   removeRelay: (id: string) => void
   testRelay: (id: string) => Promise<boolean>
-  syncControlPlane: () => Promise<boolean>
-  regenerateEnrollmentToken: () => string
+  syncControlPlane: (silent?: boolean) => Promise<boolean>
   addAudit: (event: Omit<AuditEvent, 'id' | 'at'>) => void
   toast: (title: string, description?: string, tone?: ToastMessage['tone']) => void
   dismissToast: (id: string) => void
@@ -48,22 +44,12 @@ function usePersistentState<T>(key: string, initial: T) {
     try {
       const stored = localStorage.getItem(key)
       if (!stored) return initial
-      const parsed = JSON.parse(stored) as T
-      if (key === 'sc.settings.v1' && parsed && typeof parsed === 'object') {
-        return {
-          ...parsed,
-          enrollmentToken: sessionStorage.getItem('sc.enrollmentToken') || '',
-        } as T
-      }
-      return parsed
+      return JSON.parse(stored) as T
     } catch { return initial }
   })
   useEffect(() => {
     try {
-      const safeValue = key === 'sc.settings.v1' && value && typeof value === 'object'
-        ? { ...value, enrollmentToken: '' }
-        : value
-      localStorage.setItem(key, JSON.stringify(safeValue))
+      localStorage.setItem(key, JSON.stringify(value))
     } catch { /* storage can be disabled */ }
   }, [key, value])
   return [value, setValue] as const
@@ -77,20 +63,34 @@ function platformFromOs(os = ''): Platform {
   return 'windows'
 }
 
-export function AppStoreProvider({ children }: { children: ReactNode }) {
-  const [devices, setDevices] = usePersistentState<Device[]>('sc.devices.v1', initialDevices)
-  const [sessions, setSessions] = usePersistentState<SupportSession[]>('sc.sessions.v1', initialSessions)
-  const [relays, setRelays] = usePersistentState<Relay[]>('sc.relays.v1', initialRelays)
-  const [jobs, setJobs] = usePersistentState<Job[]>('sc.jobs.v1', initialJobs)
-  const [audit, setAudit] = usePersistentState<AuditEvent[]>('sc.audit.v1', initialAudit)
-  const [settings, setSettings] = usePersistentState<AppSettings>('sc.settings.v1', initialSettings)
+function makeHostedRelay(): Relay[] {
+  return [{
+    id: 'agon-hosted',
+    name: 'Agon Hosted Relay',
+    region: 'Global',
+    city: 'Hosted',
+    url: `${window.location.origin}/api/agon`,
+    status: 'unchecked',
+    latency: 0,
+    load: 0,
+    connections: 0,
+    version: '1.0.0',
+    primary: true,
+    sample: false,
+  }]
+}
+
+export function AppStoreProvider({ children, userId }: { children: ReactNode; userId: string }) {
+  const scopedKey = (name: string) => `sc.${userId}.${name}.v2`
+  const [devices, setDevices] = usePersistentState<Device[]>(scopedKey('devices'), [])
+  const [sessions, setSessions] = usePersistentState<SupportSession[]>(scopedKey('sessions'), [])
+  const [relays, setRelays] = usePersistentState<Relay[]>(scopedKey('relays'), makeHostedRelay())
+  const [jobs, setJobs] = usePersistentState<Job[]>(scopedKey('jobs'), [])
+  const [audit, setAudit] = usePersistentState<AuditEvent[]>(scopedKey('audit'), [])
+  const [settings, setSettings] = usePersistentState<AppSettings>(scopedKey('settings'), initialSettings)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
   const [syncing, setSyncing] = useState(false)
-  const [adminToken, setAdminTokenState] = useState(() => sessionStorage.getItem('sc.adminToken') || '')
-  const settingsRef = useRef(settings)
-  const adminTokenRef = useRef(adminToken)
-  useEffect(() => { settingsRef.current = settings }, [settings])
-  useEffect(() => { adminTokenRef.current = adminToken }, [adminToken])
+  const syncInFlightRef = useRef(false)
 
   const dismissToast = useCallback((id: string) => setToasts((items) => items.filter((item) => item.id !== id)), [])
   const toast = useCallback((title: string, description?: string, tone: ToastMessage['tone'] = 'success') => {
@@ -104,21 +104,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, [setAudit])
 
   const updateSettings = useCallback((patch: Partial<AppSettings>) => {
-    if (patch.enrollmentToken !== undefined) {
-      try {
-        if (patch.enrollmentToken) sessionStorage.setItem('sc.enrollmentToken', patch.enrollmentToken)
-        else sessionStorage.removeItem('sc.enrollmentToken')
-      } catch { /* session storage can be disabled */ }
-    }
     setSettings((current) => ({ ...current, ...patch }))
   }, [setSettings])
-
-  const setAdminToken = useCallback((token: string) => {
-    setAdminTokenState(token)
-    adminTokenRef.current = token
-    if (token) sessionStorage.setItem('sc.adminToken', token)
-    else sessionStorage.removeItem('sc.adminToken')
-  }, [])
 
   const updateDevice = useCallback((id: string, patch: Partial<Device>) => {
     setDevices((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item))
@@ -127,9 +114,17 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const removeDevices = useCallback((ids: string[]) => {
     const names = devices.filter((item) => ids.includes(item.id)).map((item) => item.name)
     setDevices((items) => items.filter((item) => !ids.includes(item.id)))
-    addAudit({ action: 'device.removed', actor: 'Alex Morgan', target: names.join(', '), category: 'device', severity: 'warning', detail: `${names.length} device record${names.length === 1 ? '' : 's'} removed from this console. This does not uninstall the endpoint agent.`, ip: 'This browser' })
+    void Promise.all(ids.map((id) => fetch(`/api/agon/devices/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      credentials: 'same-origin',
+    }))).then((responses) => {
+      const failed = responses.find((response) => !response.ok)
+      if (failed) throw new Error(`Device removal failed (HTTP ${failed.status})`)
+    }).catch((error) => {
+      toast('Device removal failed', error instanceof Error ? error.message : 'Could not remove device', 'error')
+    })
     toast('Device records removed', `${names.length} record${names.length === 1 ? '' : 's'} removed. Endpoint agents were not uninstalled.`, 'warning')
-  }, [devices, setDevices, addAudit, toast])
+  }, [devices, setDevices, toast])
 
   const updateSession = useCallback((id: string, patch: Partial<SupportSession>) => {
     setSessions((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item))
@@ -137,33 +132,41 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
   const createSession = useCallback(async (input: SessionInput) => {
     const device = devices.find((item) => item.id === input.deviceId)
-    let session: SupportSession = {
-      id: crypto.randomUUID(), code: sessionCode(), customer: input.customer, customerEmail: input.customerEmail,
-      deviceId: input.deviceId, deviceName: device?.name || 'Waiting for customer', issue: input.issue,
-      status: 'waiting', technician: input.technician || 'Alex Morgan', startedAt: new Date().toISOString(),
-      durationMinutes: 0, access: input.access, relay: device?.relay || 'ldn-01', quality: 'unmeasured', sample: device?.sample ?? true,
-    }
-    if (device && !device.sample && settingsRef.current.controlPlaneUrl && adminTokenRef.current) {
-      const response = await fetch(`${settingsRef.current.controlPlaneUrl.replace(/\/$/, '')}/api/sessions`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminTokenRef.current}` },
-        body: JSON.stringify({ deviceId: device.id, mode: input.access, customer: input.customer, issue: input.issue }),
-      })
-      if (!response.ok) throw new Error((await response.json()).error || 'The relay rejected the session request')
-      const data = await response.json()
-      const relayStatus = data.session.status
-      session = {
-        ...session,
-        id: data.session.id,
-        code: data.session.code,
-        status: relayStatus === 'accepted' ? 'active' : relayStatus === 'consent_required' ? 'consent_required' : 'waiting',
-        relay: data.session.relayId,
-      }
+    const response = await fetch('/api/agon/sessions', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deviceId: device?.sample ? undefined : device?.id,
+        mode: input.access,
+        customer: input.customer,
+        issue: input.issue,
+      }),
+    })
+    const data = await response.json()
+    if (!response.ok) throw new Error(data.error || 'The control plane rejected the session request')
+    const remote = data.session
+    const session: SupportSession = {
+      id: String(remote.id),
+      code: String(remote.code),
+      customer: input.customer,
+      customerEmail: input.customerEmail,
+      deviceId: remote.deviceId || undefined,
+      deviceName: String(remote.deviceName || device?.name || 'Waiting for device'),
+      issue: input.issue,
+      status: remote.status === 'consent_required' ? 'consent_required' : 'waiting',
+      technician: input.technician || 'Operator',
+      startedAt: String(remote.createdAt || new Date().toISOString()),
+      durationMinutes: 0,
+      access: input.access,
+      relay: 'agon-hosted',
+      quality: 'unmeasured',
+      sample: false,
     }
     setSessions((items) => [session, ...items])
-    addAudit({ action: 'session.requested', actor: session.technician, target: session.deviceName, category: 'access', severity: 'info', detail: `${input.access === 'interactive' ? 'Interactive' : 'Unattended'} support request ${session.code} created for ${input.customer}.`, ip: 'This browser' })
     toast('Support session created', `${session.code} · ${session.deviceName}`)
     return session
-  }, [devices, setSessions, addAudit, toast])
+  }, [devices, setSessions, toast])
 
   const runJob = useCallback(async (action: Job['action'], deviceIds: string[], name?: string) => {
     const selected = devices.filter((device) => deviceIds.includes(device.id))
@@ -175,10 +178,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       id, name: name || `${action.replaceAll('.', ' · ')} · ${selected.length} device${selected.length === 1 ? '' : 's'}`,
       action, deviceIds: selected.map((item) => item.id), deviceNames: selected.map((item) => item.name),
       status: environment === 'lab' ? 'running' : 'queued', createdAt: new Date().toISOString(), progress: environment === 'lab' ? 24 : 0,
-      actor: 'Alex Morgan', environment, results: {},
+      actor: 'Operator', environment, results: {},
     }
     setJobs((items) => [job, ...items])
-    addAudit({ action: 'job.created', actor: 'Alex Morgan', target: selected.map((item) => item.name).join(', '), category: 'automation', severity: 'info', detail: `${action} dispatched through the ${environment === 'lab' ? 'local device emulator' : 'configured control plane'}.`, ip: 'This browser' })
+    addAudit({ action: 'job.created', actor: 'Operator', target: selected.map((item) => item.name).join(', '), category: 'automation', severity: 'info', detail: `${action} dispatched through the ${environment === 'lab' ? 'local device emulator' : 'hosted control plane'}.`, ip: 'This browser' })
     toast(environment === 'lab' ? 'Lab job started' : 'Job sent to relay', `${action} · ${selected.length} target${selected.length === 1 ? '' : 's'}`, 'info')
 
     if (environment === 'lab') {
@@ -198,19 +201,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    if (!settingsRef.current.controlPlaneUrl || !adminTokenRef.current) {
-      setJobs((items) => items.map((item) => item.id === id ? { ...item, status: 'awaiting relay', summary: 'Add a control-plane URL and administrator token in Settings to dispatch this job.' } : item))
-      toast('Job awaiting relay credentials', 'Configure the control plane in Settings.', 'warning')
-      return
-    }
     const results: Record<string, string> = {}
     const remoteJobIds: Record<string, string> = {}
     const remoteStatuses: string[] = []
     let completed = 0
     await Promise.all(real.map(async (device) => {
       try {
-        const response = await fetch(`${settingsRef.current.controlPlaneUrl.replace(/\/$/, '')}/api/devices/${device.id}/commands`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminTokenRef.current}` },
+        const response = await fetch(`/api/agon/devices/${encodeURIComponent(device.id)}/commands`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action, payload: { requestedBy: 'web-console' } }),
         })
         const data = await response.json()
@@ -228,16 +228,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       : remoteStatuses.length > 0 && remoteStatuses.every((value) => value === 'queued') ? 'queued' : 'running'
     setJobs((items) => items.map((item) => item.id === id ? {
       ...item, status, progress: 0, completedAt: failedDispatches === real.length ? new Date().toISOString() : undefined,
-      summary: `${remoteJobIds ? Object.keys(remoteJobIds).length : 0} accepted by relay; synchronize for endpoint results`,
+      summary: `${Object.keys(remoteJobIds).length} accepted by relay; endpoint results update automatically`,
       results: { ...results }, remoteJobIds,
     } : item))
-    toast(failedDispatches ? 'Some dispatches failed' : 'Commands accepted by relay', 'Synchronize the control plane to see endpoint results.', failedDispatches ? 'warning' : 'info')
+    toast(failedDispatches ? 'Some dispatches failed' : 'Commands accepted by relay', 'Endpoint results update automatically.', failedDispatches ? 'warning' : 'info')
   }, [devices, setJobs, addAudit, toast])
 
   const addRelay = useCallback((input: Pick<Relay, 'name' | 'region' | 'city' | 'url'>) => {
     const id = input.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || crypto.randomUUID()
     setRelays((items) => [...items, { ...input, id, status: 'unchecked', latency: 0, load: 0, connections: 0, version: 'unknown', primary: false, sample: false }])
-    addAudit({ action: 'relay.registered', actor: 'Alex Morgan', target: id, category: 'relay', severity: 'info', detail: `${input.name} registered at ${input.url}. Health remains unchecked until the first successful probe.`, ip: 'This browser' })
+    addAudit({ action: 'relay.registered', actor: 'Operator', target: id, category: 'relay', severity: 'info', detail: `${input.name} registered at ${input.url}. Health remains unchecked until the first successful probe.`, ip: 'This browser' })
     toast('Relay registered', `${input.name} is ready for a health check.`)
   }, [setRelays, addAudit, toast])
 
@@ -268,20 +268,16 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     }
   }, [relays, setRelays, toast])
 
-  const syncControlPlane = useCallback(async () => {
-    if (!settings.controlPlaneUrl || !adminToken) {
-      toast('Control plane not configured', 'Add the relay URL and administrator token first.', 'warning')
-      return false
-    }
+  const syncControlPlane = useCallback(async (silent = false) => {
+    if (syncInFlightRef.current) return false
+    syncInFlightRef.current = true
     setSyncing(true)
     try {
-      const baseUrl = settings.controlPlaneUrl.replace(/\/$/, '')
-      const headers = { Authorization: `Bearer ${adminToken}` }
       const [deviceResponse, jobResponse, auditResponse, sessionResponse] = await Promise.all([
-        fetch(`${baseUrl}/api/devices`, { headers, cache: 'no-store' }),
-        fetch(`${baseUrl}/api/jobs`, { headers, cache: 'no-store' }),
-        fetch(`${baseUrl}/api/audit?limit=500`, { headers, cache: 'no-store' }),
-        fetch(`${baseUrl}/api/sessions`, { headers, cache: 'no-store' }),
+        fetch('/api/agon/devices', { credentials: 'same-origin', cache: 'no-store' }),
+        fetch('/api/agon/jobs', { credentials: 'same-origin', cache: 'no-store' }),
+        fetch('/api/agon/audit?limit=500', { credentials: 'same-origin', cache: 'no-store' }),
+        fetch('/api/agon/sessions', { credentials: 'same-origin', cache: 'no-store' }),
       ])
       const responses = [deviceResponse, jobResponse, auditResponse, sessionResponse]
       const errorResponse = responses.find((response) => !response.ok)
@@ -385,33 +381,40 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return [...updatedAggregates, ...standaloneRemoteJobs, ...current.filter((job) => job.environment === 'lab')]
           .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
       })
-      toast('Control plane synchronized', `${realDevices.length} devices, ${remoteJobs.length} jobs, and ${relayAudit.length} relay events loaded.`)
+      if (!silent) toast('Control plane synchronized', `${realDevices.length} devices, ${remoteJobs.length} jobs, and ${relayAudit.length} relay events loaded.`)
       return true
     } catch (error) {
-      toast('Synchronization failed', error instanceof Error ? error.message : 'Could not reach the control plane', 'error')
+      if (!silent) toast('Synchronization failed', error instanceof Error ? error.message : 'Could not reach the control plane', 'error')
       return false
-    } finally { setSyncing(false) }
-  }, [settings.controlPlaneUrl, adminToken, setDevices, setSessions, setJobs, setAudit, toast])
+    } finally {
+      setSyncing(false)
+      syncInFlightRef.current = false
+    }
+  }, [setDevices, setSessions, setJobs, setAudit, toast])
 
-  const regenerateEnrollmentToken = useCallback(() => {
-    const token = randomToken()
-    updateSettings({ enrollmentToken: token })
-    addAudit({ action: 'enrollment.token.rotated', actor: 'Alex Morgan', target: 'Console enrollment profile', category: 'security', severity: 'warning', detail: 'A new local enrollment token was generated. Update ENROLLMENT_TOKEN on the relay before deploying packages.', ip: 'This browser' })
-    toast('Enrollment token regenerated', 'Use the same token on your control plane.', 'warning')
-    return token
-  }, [updateSettings, addAudit, toast])
+  useEffect(() => {
+    void syncControlPlane(true)
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void syncControlPlane(true)
+    }, 12_000)
+    const onFocus = () => void syncControlPlane(true)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [syncControlPlane])
 
   const resetWorkspace = useCallback(() => {
-    setDevices(initialDevices); setSessions(initialSessions); setRelays(initialRelays); setJobs(initialJobs); setAudit(initialAudit); setSettings(initialSettings)
-    setAdminToken('')
-    toast('Lab workspace restored', 'Local changes were cleared and the supplied sample fleet restored.', 'info')
-  }, [setDevices, setSessions, setRelays, setJobs, setAudit, setSettings, setAdminToken, toast])
+    setDevices([]); setSessions([]); setRelays(makeHostedRelay()); setJobs([]); setAudit([]); setSettings(initialSettings)
+    toast('Local cache cleared', 'Live server records and installed agents were not changed.', 'info')
+  }, [setDevices, setSessions, setRelays, setJobs, setAudit, setSettings, toast])
 
   const value = useMemo<StoreValue>(() => ({
-    devices, sessions, relays, jobs, audit, settings, toasts, adminToken, syncing,
-    setAdminToken, updateSettings, updateDevice, removeDevices, createSession, updateSession, runJob,
-    addRelay, removeRelay, testRelay, syncControlPlane, regenerateEnrollmentToken, addAudit, toast, dismissToast, resetWorkspace,
-  }), [devices, sessions, relays, jobs, audit, settings, toasts, adminToken, syncing, setAdminToken, updateSettings, updateDevice, removeDevices, createSession, updateSession, runJob, addRelay, removeRelay, testRelay, syncControlPlane, regenerateEnrollmentToken, addAudit, toast, dismissToast, resetWorkspace])
+    devices, sessions, relays, jobs, audit, settings, toasts, syncing,
+    updateSettings, updateDevice, removeDevices, createSession, updateSession, runJob,
+    addRelay, removeRelay, testRelay, syncControlPlane, addAudit, toast, dismissToast, resetWorkspace,
+  }), [devices, sessions, relays, jobs, audit, settings, toasts, syncing, updateSettings, updateDevice, removeDevices, createSession, updateSession, runJob, addRelay, removeRelay, testRelay, syncControlPlane, addAudit, toast, dismissToast, resetWorkspace])
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
 }

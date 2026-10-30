@@ -1,43 +1,409 @@
-import { motion } from 'framer-motion'
-import { Building2, Check, Database, Download, Eye, EyeOff, KeyRound, LoaderCircle, RefreshCw, RotateCcw, Save, Server, ShieldCheck, SlidersHorizontal, Trash2 } from 'lucide-react'
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { artifactPath, downloadText } from '../lib/utils'
-import { useAppStore } from '../store/AppStore'
-import { Badge, Button, Modal, PageHeader, Panel, Toggle } from '../components/UI'
+import { motion } from "framer-motion";
+import {
+  Building2,
+  Check,
+  Database,
+  Download,
+  LoaderCircle,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Server,
+  ShieldCheck,
+  SlidersHorizontal,
+  Trash2,
+} from "lucide-react";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { downloadText } from "../lib/utils";
+import { useAppStore } from "../store/AppStore";
+import { Badge, Button, Modal, PageHeader, Panel, Toggle } from "../components/UI";
 
 const sections = [
-  { id: 'general', label: 'General', icon: Building2, description: 'Workspace identity and defaults' },
-  { id: 'connection', label: 'Control plane', icon: Server, description: 'Live relay synchronization' },
-  { id: 'security', label: 'Security policies', icon: ShieldCheck, description: 'Consent and session safeguards' },
-  { id: 'data', label: 'Data & workspace', icon: Database, description: 'Export, retention and reset' },
-]
+  { id: "general", label: "General", icon: Building2, description: "Workspace identity and defaults" },
+  { id: "connection", label: "Control plane", icon: Server, description: "Hosted relay and live devices" },
+  { id: "security", label: "Security policies", icon: ShieldCheck, description: "Consent and session safeguards" },
+  { id: "data", label: "Data & workspace", icon: Database, description: "Export, retention and cache" },
+];
 
 export default function Settings() {
-  const { settings, updateSettings, devices, sessions, jobs, audit, relays, adminToken, setAdminToken, syncControlPlane, syncing, regenerateEnrollmentToken, resetWorkspace, toast } = useAppStore()
-  const navigate = useNavigate()
-  const [section, setSection] = useState('general')
-  const [showToken, setShowToken] = useState(false)
-  const [showEnrollment, setShowEnrollment] = useState(false)
-  const [resetOpen, setResetOpen] = useState(false)
-  const save = () => toast('Settings saved', 'Workspace preferences persist in this browser.')
-  const exportWorkspace = () => {
-    downloadText(JSON.stringify({ format: 'agon-workspace-v1', exportedAt: new Date().toISOString(), settings: { ...settings, enrollmentToken: '[redacted]' }, devices, sessions, jobs, audit, relays }, null, 2), `agon-workspace-${new Date().toISOString().slice(0, 10)}.json`, 'application/json')
-    toast('Workspace exported', 'The enrollment token was redacted from the export.')
-  }
-  const storageSize = new Blob([Object.keys(localStorage).filter((key) => key.startsWith('sc.')).map((key) => localStorage.getItem(key)).join('')]).size
+  const {
+    settings,
+    updateSettings,
+    devices,
+    sessions,
+    jobs,
+    audit,
+    relays,
+    syncControlPlane,
+    syncing,
+    resetWorkspace,
+    toast,
+  } = useAppStore();
+  const navigate = useNavigate();
+  const [section, setSection] = useState("general");
+  const [resetOpen, setResetOpen] = useState(false);
 
-  return <div>
-    <PageHeader eyebrow="Workspace administration" title="Settings" description="Configure console preferences, connect a real relay and manage consent-centered security defaults." actions={<Button variant="primary" icon={Save} onClick={save}>Save preferences</Button>} />
-    <div className="grid gap-4 lg:grid-cols-[250px_minmax(0,1fr)]">
-      <div className="space-y-2">{sections.map((item) => <button key={item.id} onClick={() => setSection(item.id)} className={`flex w-full items-center gap-3 rounded-xl border p-3.5 text-left transition ${section === item.id ? 'border-lime-300/20 bg-lime-300/[0.05]' : 'border-transparent hover:bg-white/[0.025]'}`}><div className={`rounded-lg p-2 ${section === item.id ? 'bg-lime-300/[0.08] text-lime-300' : 'bg-white/[0.03] text-slate-500'}`}><item.icon size={16}/></div><div><p className={`text-[11px] font-medium ${section === item.id ? 'text-white' : 'text-slate-400'}`}>{item.label}</p><p className="mt-0.5 text-[8px] text-slate-600">{item.description}</p></div></button>)}<Panel className="mt-4 p-4"><div className="flex items-center gap-2"><Database size={14} className="text-slate-500"/><p className="text-[10px] font-medium text-slate-300">Local persistence</p></div><p className="mt-2 text-[9px] leading-4 text-slate-600">{devices.length + sessions.length + jobs.length + audit.length + relays.length} records · {(storageSize / 1024).toFixed(1)} KB stored in this browser.</p></Panel></div>
-      <motion.div key={section} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .25 }}>
-        {section === 'general' && <Panel className="overflow-hidden"><div className="border-b border-white/[0.07] p-5 sm:p-6"><h2 className="font-display text-base font-semibold text-white">Workspace identity</h2><p className="mt-1 text-[11px] text-slate-500">Used throughout the console, exports and enrollment profiles.</p></div><div className="space-y-5 p-5 sm:p-6"><div className="grid gap-4 sm:grid-cols-2"><div><label className="label">Organization name</label><input className="input" value={settings.organization} onChange={(event) => updateSettings({ organization: event.target.value })}/></div><div><label className="label">Console display name</label><input className="input" value={settings.consoleName} onChange={(event) => updateSettings({ consoleName: event.target.value })}/></div></div><div className="grid gap-4 sm:grid-cols-2"><div><label className="label">Default enrollment group</label><select className="input" value={settings.defaultGroup} onChange={(event) => updateSettings({ defaultGroup: event.target.value })}>{['Unassigned', 'Infrastructure', 'Engineering', 'People', 'Sales', 'Marketing', 'Executive', 'Retail', 'Field Ops', 'Finance'].map((item) => <option key={item}>{item}</option>)}</select></div><div><label className="label">Idle operator timeout</label><select className="input" value={settings.sessionTimeout} onChange={(event) => updateSettings({ sessionTimeout: Number(event.target.value) })}><option value={5}>5 minutes</option><option value={15}>15 minutes</option><option value={30}>30 minutes</option><option value={60}>60 minutes</option></select></div></div><div className="flex items-center justify-between rounded-xl border border-white/[0.07] bg-white/[0.02] p-4"><div><p className="text-[11px] font-medium text-slate-200">Automatic agent update policy</p><p className="mt-1 text-[9px] text-slate-500">Include update eligibility in inventory reporting.</p></div><Toggle checked={settings.autoUpdateAgents} onChange={(checked) => updateSettings({ autoUpdateAgents: checked })} label="Automatic agent updates"/></div><div className="flex justify-end border-t border-white/[0.06] pt-5"><Button variant="primary" icon={Check} onClick={save}>Save general settings</Button></div></div></Panel>}
-        {section === 'connection' && <div className="space-y-4"><Panel className="overflow-hidden"><div className="border-b border-white/[0.07] p-5 sm:p-6"><div className="flex items-center justify-between"><div><h2 className="font-display text-base font-semibold text-white">Live control plane</h2><p className="mt-1 text-[11px] text-slate-500">Synchronize real enrolled devices from your self-hosted relay.</p></div><Badge tone={devices.some((d) => !d.sample) ? 'green' : 'neutral'} dot>{devices.filter((d) => !d.sample).length} live devices</Badge></div></div><div className="space-y-5 p-5 sm:p-6"><div><label className="label">Control plane URL</label><input className="input font-mono text-[11px]" value={settings.controlPlaneUrl} onChange={(event) => updateSettings({ controlPlaneUrl: event.target.value.replace(/\/$/, '') })} placeholder="https://relay.company.com"/><p className="mt-2 text-[10px] leading-4 text-slate-600">Use the same base URL as the agent. The server must allow this console origin in ALLOW_ORIGIN.</p></div><div><label className="label">Administrator bearer token</label><div className="relative"><KeyRound size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600"/><input className="input pl-9 pr-10 font-mono text-[11px]" type={showToken ? 'text' : 'password'} value={adminToken} onChange={(event) => setAdminToken(event.target.value)} placeholder="ADMIN_TOKEN from your relay"/><button onClick={() => setShowToken((value) => !value)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-600 hover:text-white" aria-label={showToken ? 'Hide token' : 'Show token'}>{showToken ? <EyeOff size={14}/> : <Eye size={14}/>}</button></div><p className="mt-2 text-[10px] text-amber-300/70">For safety, the administrator token is kept only in session storage and is cleared when this browser session ends.</p></div><div className="flex flex-wrap items-center gap-2"><Button variant="primary" icon={syncing ? LoaderCircle : RefreshCw} disabled={syncing || !settings.controlPlaneUrl || !adminToken} onClick={syncControlPlane}>{syncing ? 'Synchronizing…' : 'Test & synchronize all data'}</Button><Button icon={Download} onClick={() => { const anchor = document.createElement('a'); anchor.href = artifactPath('downloads/agon-control-plane.zip'); anchor.download = ''; anchor.click() }}>Download server</Button></div><div className="rounded-xl border border-white/[0.06] bg-black/15 p-4"><p className="font-mono text-[9px] uppercase tracking-wider text-slate-600">What synchronization does</p><p className="mt-2 text-[10px] leading-5 text-slate-500">Loads live devices, jobs, sessions, and relay audit events using your bearer token. Lab records remain marked separately; if the server is unavailable, the console does not fabricate live records.</p></div></div></Panel><Panel className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"><div><h3 className="text-[12px] font-medium text-white">Need an enrollment package?</h3><p className="mt-1 text-[10px] text-slate-500">Build native installers against this relay configuration.</p></div><Button icon={SlidersHorizontal} onClick={() => navigate('/deployment')}>Open deployment builder</Button></Panel></div>}
-        {section === 'security' && <Panel className="overflow-hidden"><div className="border-b border-white/[0.07] p-5 sm:p-6"><h2 className="font-display text-base font-semibold text-white">Security & consent profile</h2><p className="mt-1 text-[11px] text-slate-500">Policy preferences for this workspace and future support workflows.</p></div><div className="divide-y divide-white/[0.06] px-5 sm:px-6">{[{ key: 'requireConsent' as const, title: 'Require interactive consent by default', copy: 'New support invitations start in interactive mode. Endpoint unattended policy can explicitly override this.' }, { key: 'requireMfa' as const, title: 'Require MFA for privileged operators', copy: 'Organization policy preference. Enforce this in your production identity provider and reverse proxy.' }, { key: 'recordSessions' as const, title: 'Retain session records', copy: 'Keep support metadata and transcripts in exports. Media recording requires a separate reviewed module.' }, { key: 'notifyOnRecording' as const, title: 'Show recording notices', copy: 'Display a visible notice whenever a recording-capable support module is active.' }].map((item) => <div key={item.key} className="flex items-center justify-between gap-5 py-5"><div><p className="text-[12px] font-medium text-slate-200">{item.title}</p><p className="mt-1 max-w-xl text-[10px] leading-5 text-slate-500">{item.copy}</p></div><Toggle checked={settings[item.key]} onChange={(checked) => updateSettings({ [item.key]: checked })} label={item.title}/></div>)}</div><div className="border-t border-white/[0.07] p-5 sm:p-6"><div className="flex flex-col gap-4 sm:flex-row sm:items-end"><div className="flex-1"><label className="label">Site enrollment token</label><div className="relative"><input className="input pr-10 font-mono text-[11px]" type={showEnrollment ? 'text' : 'password'} value={settings.enrollmentToken} onChange={(event) => updateSettings({ enrollmentToken: event.target.value })}/><button onClick={() => setShowEnrollment((value) => !value)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-600 hover:text-white">{showEnrollment ? <EyeOff size={14}/> : <Eye size={14}/>}</button></div></div><Button icon={RefreshCw} onClick={regenerateEnrollmentToken}>Rotate token</Button></div><p className="mt-3 text-[10px] leading-4 text-slate-600">Rotation here changes future packages only. Set the same value on the relay. Existing per-device credentials remain valid until separately revoked in the server datastore.</p></div></Panel>}
-        {section === 'data' && <div className="space-y-4"><Panel className="p-5 sm:p-6"><h2 className="font-display text-base font-semibold text-white">Portable workspace export</h2><p className="mt-1 max-w-xl text-[11px] leading-5 text-slate-500">Download devices, sessions, jobs, audit events and relay records in one JSON document. Administrator and enrollment secrets are excluded.</p><div className="mt-5 grid gap-3 sm:grid-cols-3">{[{ label: 'Fleet records', value: devices.length }, { label: 'Session records', value: sessions.length }, { label: 'Audit events', value: audit.length }].map((item) => <div key={item.label} className="rounded-xl bg-white/[0.025] p-4"><p className="font-display text-2xl font-semibold text-white">{item.value}</p><p className="mt-1 text-[9px] text-slate-600">{item.label}</p></div>)}</div><Button className="mt-5" icon={Download} onClick={exportWorkspace}>Export workspace JSON</Button></Panel><Panel className="border-rose-300/10 p-5 sm:p-6"><h2 className="font-display text-base font-semibold text-rose-100">Restore sample workspace</h2><p className="mt-1 max-w-xl text-[11px] leading-5 text-slate-500">Clear local changes, remove synchronized live records from this browser and restore the original lab fleet. This does not uninstall agents or modify your server.</p><Button variant="danger" className="mt-5" icon={RotateCcw} onClick={() => setResetOpen(true)}>Restore lab workspace</Button></Panel></div>}
-      </motion.div>
+  const save = () =>
+    toast("Settings saved", "Workspace preferences are stored in this account’s browser.");
+  const exportWorkspace = () => {
+    downloadText(
+      JSON.stringify(
+        {
+          format: "agon-workspace-v2",
+          exportedAt: new Date().toISOString(),
+          settings,
+          devices,
+          sessions,
+          jobs,
+          audit,
+          relays,
+        },
+        null,
+        2,
+      ),
+      `agon-workspace-${new Date().toISOString().slice(0, 10)}.json`,
+      "application/json",
+    );
+    toast("Workspace exported", "The export contains no device credentials.");
+  };
+  const storageSize = new Blob([
+    Object.keys(localStorage)
+      .filter((key) => key.startsWith("sc."))
+      .map((key) => localStorage.getItem(key))
+      .join(""),
+  ]).size;
+
+  return (
+    <div>
+      <PageHeader
+        eyebrow="Workspace administration"
+        title="Settings"
+        description="Configure account preferences and review the hosted control plane."
+        actions={
+          <Button variant="primary" icon={Save} onClick={save}>
+            Save preferences
+          </Button>
+        }
+      />
+      <div className="grid gap-4 lg:grid-cols-[250px_minmax(0,1fr)]">
+        <div className="space-y-2">
+          {sections.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setSection(item.id)}
+              className={`flex w-full items-center gap-3 rounded-xl border p-3.5 text-left transition ${
+                section === item.id
+                  ? "border-lime-300/20 bg-lime-300/[0.05]"
+                  : "border-transparent hover:bg-white/[0.025]"
+              }`}
+            >
+              <div
+                className={`rounded-lg p-2 ${
+                  section === item.id
+                    ? "bg-lime-300/[0.08] text-lime-300"
+                    : "bg-white/[0.03] text-slate-500"
+                }`}
+              >
+                <item.icon size={16} />
+              </div>
+              <div>
+                <p
+                  className={`text-[11px] font-medium ${
+                    section === item.id ? "text-white" : "text-slate-400"
+                  }`}
+                >
+                  {item.label}
+                </p>
+                <p className="mt-0.5 text-[8px] text-slate-600">{item.description}</p>
+              </div>
+            </button>
+          ))}
+          <Panel className="mt-4 p-4">
+            <div className="flex items-center gap-2">
+              <Database size={14} className="text-slate-500" />
+              <p className="text-[10px] font-medium text-slate-300">Browser cache</p>
+            </div>
+            <p className="mt-2 text-[9px] leading-4 text-slate-600">
+              {devices.length + sessions.length + jobs.length + audit.length + relays.length} cached records ·{" "}
+              {(storageSize / 1024).toFixed(1)} KB stored in this browser.
+            </p>
+          </Panel>
+        </div>
+
+        <motion.div
+          key={section}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25 }}
+        >
+          {section === "general" && (
+            <Panel className="overflow-hidden">
+              <div className="border-b border-white/[0.07] p-5 sm:p-6">
+                <h2 className="font-display text-base font-semibold text-white">
+                  Workspace identity
+                </h2>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Used in the console and workspace exports.
+                </p>
+              </div>
+              <div className="space-y-5 p-5 sm:p-6">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="label">Organization name</label>
+                    <input
+                      className="input"
+                      value={settings.organization}
+                      onChange={(event) =>
+                        updateSettings({ organization: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Console display name</label>
+                    <input
+                      className="input"
+                      value={settings.consoleName}
+                      onChange={(event) =>
+                        updateSettings({ consoleName: event.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="label">Default enrollment group</label>
+                    <select
+                      className="input"
+                      value={settings.defaultGroup}
+                      onChange={(event) =>
+                        updateSettings({ defaultGroup: event.target.value })
+                      }
+                    >
+                      {[
+                        "Unassigned",
+                        "Infrastructure",
+                        "Engineering",
+                        "People",
+                        "Sales",
+                        "Marketing",
+                        "Executive",
+                        "Retail",
+                        "Field Ops",
+                        "Finance",
+                      ].map((item) => (
+                        <option key={item}>{item}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label">Operator idle timeout</label>
+                    <select
+                      className="input"
+                      value={settings.sessionTimeout}
+                      onChange={(event) =>
+                        updateSettings({ sessionTimeout: Number(event.target.value) })
+                      }
+                    >
+                      <option value={5}>5 minutes</option>
+                      <option value={15}>15 minutes</option>
+                      <option value={30}>30 minutes</option>
+                      <option value={60}>60 minutes</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="flex justify-end border-t border-white/[0.06] pt-5">
+                  <Button variant="primary" icon={Check} onClick={save}>
+                    Save general settings
+                  </Button>
+                </div>
+              </div>
+            </Panel>
+          )}
+
+          {section === "connection" && (
+            <div className="space-y-4">
+              <Panel className="overflow-hidden">
+                <div className="border-b border-white/[0.07] p-5 sm:p-6">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="font-display text-base font-semibold text-white">
+                        Agon hosted control plane
+                      </h2>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        The relay is hosted with this console. Agents connect to it over outbound WebSockets.
+                      </p>
+                    </div>
+                    <Badge tone="green" dot>
+                      {devices.filter((device) => !device.sample).length} live devices
+                    </Badge>
+                  </div>
+                </div>
+                <div className="space-y-5 p-5 sm:p-6">
+                  <div className="rounded-xl border border-white/[0.06] bg-black/15 p-4">
+                    <p className="font-mono text-[9px] uppercase tracking-wider text-slate-600">
+                      Hosted API
+                    </p>
+                    <p className="mt-2 break-all font-mono text-[11px] text-slate-300">
+                      {window.location.origin}/api/agon
+                    </p>
+                    <p className="mt-2 text-[10px] leading-5 text-slate-500">
+                      Sign-in protects operator actions. Installers get a unique, single-use enrollment token automatically when you build each package.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="primary"
+                      icon={syncing ? LoaderCircle : RefreshCw}
+                      disabled={syncing}
+                      onClick={() => void syncControlPlane()}
+                    >
+                      {syncing ? "Synchronizing…" : "Synchronize now"}
+                    </Button>
+                    <Button
+                      icon={SlidersHorizontal}
+                      onClick={() => navigate("/deployment")}
+                    >
+                      Build an installer
+                    </Button>
+                  </div>
+                  <p className="text-[10px] leading-5 text-slate-600">
+                    Device, job, session and audit data is stored in the server database and refreshes automatically while this console is open.
+                  </p>
+                </div>
+              </Panel>
+            </div>
+          )}
+
+          {section === "security" && (
+            <Panel className="overflow-hidden">
+              <div className="border-b border-white/[0.07] p-5 sm:p-6">
+                <h2 className="font-display text-base font-semibold text-white">
+                  Security & consent profile
+                </h2>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Defaults for support requests and visible endpoint behavior.
+                </p>
+              </div>
+              <div className="divide-y divide-white/[0.06] px-5 sm:px-6">
+                {[
+                  {
+                    key: "requireConsent" as const,
+                    title: "Require interactive consent by default",
+                    copy: "New support invitations start in interactive mode. An endpoint may require local approval.",
+                  },
+                  {
+                    key: "requireMfa" as const,
+                    title: "Require MFA for privileged operators",
+                    copy: "Configure MFA in your identity provider. This setting records the workspace preference.",
+                  },
+                  {
+                    key: "recordSessions" as const,
+                    title: "Retain session records",
+                    copy: "Keep support request metadata in the workspace. Session media is not captured.",
+                  },
+                  {
+                    key: "notifyOnRecording" as const,
+                    title: "Show recording notices",
+                    copy: "Display notices if a separately approved recording module is added.",
+                  },
+                ].map((item) => (
+                  <div
+                    key={item.key}
+                    className="flex items-center justify-between gap-5 py-5"
+                  >
+                    <div>
+                      <p className="text-[12px] font-medium text-slate-200">
+                        {item.title}
+                      </p>
+                      <p className="mt-1 max-w-xl text-[10px] leading-5 text-slate-500">
+                        {item.copy}
+                      </p>
+                    </div>
+                    <Toggle
+                      checked={settings[item.key]}
+                      onChange={(checked) => updateSettings({ [item.key]: checked })}
+                      label={item.title}
+                    />
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          )}
+
+          {section === "data" && (
+            <div className="space-y-4">
+              <Panel className="p-5 sm:p-6">
+                <h2 className="font-display text-base font-semibold text-white">
+                  Workspace export
+                </h2>
+                <p className="mt-1 max-w-xl text-[11px] leading-5 text-slate-500">
+                  Download cached device, session, job, audit and preference data. Device credentials are never included.
+                </p>
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  {[
+                    { label: "Fleet records", value: devices.length },
+                    { label: "Session records", value: sessions.length },
+                    { label: "Audit events", value: audit.length },
+                  ].map((item) => (
+                    <div key={item.label} className="rounded-xl bg-white/[0.025] p-4">
+                      <p className="font-display text-2xl font-semibold text-white">
+                        {item.value}
+                      </p>
+                      <p className="mt-1 text-[9px] text-slate-600">{item.label}</p>
+                    </div>
+                  ))}
+                </div>
+                <Button className="mt-5" icon={Download} onClick={exportWorkspace}>
+                  Export workspace JSON
+                </Button>
+              </Panel>
+              <Panel className="border-rose-300/10 p-5 sm:p-6">
+                <h2 className="font-display text-base font-semibold text-rose-100">
+                  Clear this browser’s cache
+                </h2>
+                <p className="mt-1 max-w-xl text-[11px] leading-5 text-slate-500">
+                  Remove local cached data and preferences. This does not delete server records, revoke agents or uninstall software.
+                </p>
+                <Button
+                  variant="danger"
+                  className="mt-5"
+                  icon={RotateCcw}
+                  onClick={() => setResetOpen(true)}
+                >
+                  Clear local cache
+                </Button>
+              </Panel>
+            </div>
+          )}
+        </motion.div>
+      </div>
+      <Modal
+        open={resetOpen}
+        onClose={() => setResetOpen(false)}
+        title="Clear this browser’s local cache?"
+        description="Server-side devices and audit records remain unchanged."
+        size="sm"
+      >
+        <div className="p-6">
+          <p className="text-sm leading-6 text-slate-400">
+            Cached records will be loaded from your account again after clearing.
+          </p>
+          <div className="mt-6 flex justify-end gap-2">
+            <Button onClick={() => setResetOpen(false)}>Cancel</Button>
+            <Button
+              variant="danger"
+              icon={Trash2}
+              onClick={() => {
+                resetWorkspace();
+                setResetOpen(false);
+              }}
+            >
+              Clear cache
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
-    <Modal open={resetOpen} onClose={() => setResetOpen(false)} title="Restore the lab workspace?" description="This browser-only action cannot be undone." size="sm"><div className="p-6"><p className="text-sm leading-6 text-slate-400">All locally created sessions, custom relays, jobs and settings will be replaced. Live relay data and installed agents are not changed.</p><div className="mt-6 flex justify-end gap-2"><Button onClick={() => setResetOpen(false)}>Cancel</Button><Button variant="danger" icon={Trash2} onClick={() => { resetWorkspace(); setResetOpen(false) }}>Restore sample data</Button></div></div></Modal>
-  </div>
+  );
 }

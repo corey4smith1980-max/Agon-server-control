@@ -92,8 +92,6 @@ export interface AuditEvent {
 export interface AppSettings {
   organization: string
   consoleName: string
-  controlPlaneUrl: string
-  enrollmentToken: string
   defaultGroup: string
   requireConsent: boolean
   recordSessions: boolean

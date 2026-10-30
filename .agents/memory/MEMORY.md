@@ -1,0 +1,1 @@
+- [Agon Clerk React version isolation](agon-clerk-react-versions.md) — keep Clerk's React patch local; the shared workspace catalog is used by Expo.

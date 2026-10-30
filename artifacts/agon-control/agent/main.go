@@ -243,6 +243,7 @@ func enroll(cfg *Config, configPath string) error {
 		return errors.New("enrollment response was incomplete")
 	}
 	cfg.DeviceID, cfg.DeviceToken = result.DeviceID, result.DeviceToken
+	cfg.EnrollmentToken = ""
 	if err := saveConfig(configPath, *cfg); err != nil {
 		return fmt.Errorf("save device credentials: %w", err)
 	}

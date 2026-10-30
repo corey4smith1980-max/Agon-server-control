@@ -3,7 +3,7 @@ import { Router, type RequestHandler } from "express";
 import { getAuth } from "@clerk/express";
 import { pool } from "@workspace/db";
 import { addAudit, createRecord, getRecord, listRecords } from "../lib/agonStore";
-import { queueAgonCommand } from "../lib/agonWebSocket";
+import { disconnectAgonDevice, queueAgonCommand } from "../lib/agonWebSocket";
 
 const router = Router();
 const allowedActions = new Set([
@@ -226,6 +226,25 @@ router.get("/devices", async (_request, response) => {
       return { ...safeDevice, id };
     }),
   });
+});
+
+router.delete("/devices/:deviceId", async (request, response) => {
+  const owner = ownerId(response);
+  const result = await pool.query(
+    `DELETE FROM agon_records
+     WHERE id = $1 AND owner_id = $2 AND kind = 'device'
+     RETURNING id`,
+    [request.params.deviceId, owner],
+  );
+  if (!result.rowCount) {
+    response.status(404).json({ error: "Device not found in this account." });
+    return;
+  }
+  disconnectAgonDevice(request.params.deviceId);
+  await addAudit(owner, "device.enrollment.revoked", {
+    deviceId: request.params.deviceId,
+  });
+  response.status(204).end();
 });
 
 router.get("/jobs", async (_request, response) => {

@@ -51,8 +51,6 @@ export const initialAudit: AuditEvent[] = []
 export const initialSettings: AppSettings = {
   organization: 'Arcada Systems',
   consoleName: 'IT Operations',
-  controlPlaneUrl: '',
-  enrollmentToken: '',
   defaultGroup: 'Unassigned',
   requireConsent: true,
   recordSessions: true,

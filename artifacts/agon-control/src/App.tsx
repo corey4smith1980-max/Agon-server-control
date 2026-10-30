@@ -117,7 +117,7 @@ function SignedInConsole() {
   if (!isSignedIn || !userId) return <AuthLanding />;
 
   return (
-    <AppStoreProvider userId={userId}>
+    <AppStoreProvider key={userId} userId={userId}>
       <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route element={<ConsoleLayout />}>

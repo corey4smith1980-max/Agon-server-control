@@ -1,5 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, Server as HttpServer } from "node:http";
+import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import {
   addAudit,
@@ -124,7 +125,9 @@ async function completeJob(
       const status =
         failed || resultObject.consentRequired === true
           ? "consent_required"
-          : session.data.status;
+          : resultObject.accepted === true
+            ? "accepted"
+            : session.data.status;
       await saveRecord(ownerId, "session", session.id, {
         ...session.data,
         status,
@@ -217,7 +220,14 @@ export async function queueAgonCommand(
   return { ...job, id };
 }
 
-function rejectUpgrade(socket: NodeJS.WritableStream, status: number): void {
+export function disconnectAgonDevice(deviceId: string): void {
+  const connection = connections.get(deviceId);
+  if (!connection) return;
+  connections.delete(deviceId);
+  connection.socket.close(4003, "Device enrollment revoked");
+}
+
+function rejectUpgrade(socket: Duplex, status: number): void {
   const statusText = status === 401 ? "Unauthorized" : "Not Found";
   socket.write(`HTTP/1.1 ${status} ${statusText}\r\nConnection: close\r\n\r\n`);
   socket.destroy();
@@ -272,8 +282,11 @@ export function attachAgonWebSockets(server: HttpServer): void {
     socket.on("message", (raw) => {
       void (async () => {
         const message = JSON.parse(raw.toString()) as AgentMessage;
-        if (message.type === "hello" || message.type === "heartbeat") {
+        if (message.type === "hello") {
           await updateHeartbeat(ownerId, deviceId, message.device);
+        } else if (message.type === "heartbeat") {
+          await updateHeartbeat(ownerId, deviceId, message.device);
+          await sendQueuedJobs(ownerId, deviceId, socket);
         } else if (message.type === "command_result") {
           await completeJob(ownerId, deviceId, message);
         }

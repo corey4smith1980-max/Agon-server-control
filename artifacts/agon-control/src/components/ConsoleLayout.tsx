@@ -1,7 +1,8 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { BarChart3, Bell, ChevronRight, Command, Download, Headset, LayoutDashboard, Menu, MonitorSmartphone, Network, PackagePlus, Plus, Radio, ScrollText, Search, Settings2, ShieldCheck, Workflow, X } from 'lucide-react'
+import { BarChart3, Bell, ChevronRight, Command, Download, Headset, LayoutDashboard, LogOut, Menu, MonitorSmartphone, Network, PackagePlus, Plus, Radio, ScrollText, Search, Settings2, ShieldCheck, Workflow, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { useClerk, useUser } from '@clerk/react'
 import { useAppStore } from '../store/AppStore'
 import { cn, formatDateTime, openSessionLauncher } from '../lib/utils'
 import { Badge, IconButton, ToastStack } from './UI'
@@ -34,6 +35,10 @@ function Brand() {
 
 function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { devices, sessions, relays, settings } = useAppStore()
+  const { user } = useUser()
+  const { signOut } = useClerk()
+  const operatorName = user?.fullName || user?.primaryEmailAddress?.emailAddress || 'Agon operator'
+  const operatorInitials = operatorName.split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'AG'
   const online = devices.filter((device) => device.status === 'online' || device.status === 'idle').length
   const waiting = sessions.filter((session) => session.status === 'waiting' || session.status === 'consent_required').length
   return <>
@@ -55,7 +60,13 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
         </div>
       </div>
       <div className="border-t border-white/[0.06] p-3">
-        <div className="flex items-center gap-3 rounded-xl p-2.5"><div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-[#33443a] to-[#1c2922] text-[10px] font-semibold text-lime-200">AM</div><div className="min-w-0 flex-1"><p className="truncate text-[11px] font-medium text-slate-200">Alex Morgan</p><p className="truncate text-[9px] text-slate-600">{settings.organization} · Administrator</p></div><ShieldCheck size={15} className="text-slate-600" /></div>
+        <div className="flex items-center gap-2 rounded-xl p-2">
+          {user?.imageUrl
+            ? <img src={user.imageUrl} alt="" className="h-8 w-8 rounded-lg object-cover" />
+            : <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-[#33443a] to-[#1c2922] text-[10px] font-semibold text-lime-200">{operatorInitials}</div>}
+          <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-medium text-slate-200">{operatorName}</p><p className="truncate text-[9px] text-slate-600">{settings.organization} · Operator</p></div>
+          <button aria-label="Sign out" title="Sign out" onClick={() => void signOut({ redirectUrl: '/sign-in' })} className="rounded-lg p-2 text-slate-600 transition hover:bg-white/[0.05] hover:text-rose-200"><LogOut size={14}/></button>
+        </div>
       </div>
     </aside>
   </>

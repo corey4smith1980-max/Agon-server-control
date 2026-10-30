@@ -45,7 +45,7 @@ export function NewSessionModal() {
     event.preventDefault()
     setSubmitting(true)
     try {
-      const session = await createSession({ customer, customerEmail, deviceId: deviceId || undefined, issue, access, technician: 'Alex Morgan' })
+      const session = await createSession({ customer, customerEmail, deviceId: deviceId || undefined, issue, access, technician: 'Operator' })
       setCreatedCode(session.code)
     } catch (error) {
       toast('Could not create session', error instanceof Error ? error.message : 'Please try again', 'error')
@@ -54,7 +54,7 @@ export function NewSessionModal() {
 
   const copyCode = async () => { await copyText(createdCode); toast('Session code copied', createdCode) }
   const copyInvite = async () => {
-    await copyText(`Agon support request\nRequest code: ${createdCode}\nTechnician: Alex Morgan\nUse your approved support channel to review this request. Interactive requests require endpoint user consent.`)
+    await copyText(`Agon support request\nRequest code: ${createdCode}\nTechnician: Operator\nUse your approved support channel to review this request. Interactive requests require endpoint user consent.`)
     toast('Invitation copied', 'Share it with the customer through your trusted support channel.')
   }
 

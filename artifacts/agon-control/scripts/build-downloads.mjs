@@ -104,20 +104,6 @@ async function makeZip(files, destination) {
   );
 }
 
-const relayFiles = [
-  'server.mjs',
-  'package.json',
-  'package-lock.json',
-  '.gitignore',
-  '.env.example',
-  'Dockerfile',
-  'docker-compose.yml',
-  'README.md',
-].map((filename) => [
-  filename,
-  path.join(projectRoot, 'server', filename),
-]);
-
 const agentFiles = [
   'main.go',
   'go.mod',
@@ -139,10 +125,8 @@ const agentBuildFiles = [
 ];
 
 await Promise.all([
-  makeZip(relayFiles, path.join(downloads, 'agon-control-plane.zip')),
   makeZip(agentFiles, path.join(downloads, 'agon-agent-source.zip')),
   makeZip(agentBuildFiles, path.join(downloads, 'agon-agent-builds.zip')),
-  makeZip(relayFiles, path.join(publicDownloads, 'agon-control-plane.zip')),
   makeZip(agentFiles, path.join(publicDownloads, 'agon-agent-source.zip')),
   makeZip(agentBuildFiles, path.join(publicDownloads, 'agon-agent-builds.zip')),
 ]);
