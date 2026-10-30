@@ -14,5 +14,6 @@ export interface PendingAgonDevice {
   os: string;
   arch: string;
   agent: string;
+  allowUnattended?: boolean;
   requestedAt: Date;
 }

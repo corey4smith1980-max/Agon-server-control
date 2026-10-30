@@ -87,6 +87,7 @@ export const ListPendingAgonDevicesResponse = zod.object({
   "os": zod.string(),
   "arch": zod.string(),
   "agent": zod.string(),
+  "allowUnattended": zod.boolean().optional(),
   "requestedAt": zod.coerce.date()
 }))
 })
@@ -122,3 +123,253 @@ export const IgnoreAgonPendingDeviceParams = zod.object({
 })
 
 export const IgnoreAgonPendingDeviceResponse = zod.void()
+
+
+/**
+ * @summary Check the active role and unattended access policy for a device
+ */
+export const CheckAgonDeviceAccessPolicyParams = zod.object({
+  "deviceId": zod.coerce.string()
+})
+
+export const CheckAgonDeviceAccessPolicyResponse = zod.object({
+  "deviceId": zod.string(),
+  "interactiveAllowed": zod.boolean(),
+  "unattendedAllowed": zod.boolean(),
+  "unattendedReason": zod.string(),
+  "endpointOptIn": zod.boolean()
+})
+
+
+/**
+ * @summary List organizations available to the signed-in user
+ */
+export const ListAgonOrganizationsResponse = zod.object({
+  "organizations": zod.array(zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "role": zod.enum(['owner', 'admin', 'technician', 'auditor']),
+  "isPersonal": zod.boolean()
+})),
+  "activeOrganizationId": zod.string(),
+  "currentRole": zod.enum(['owner', 'admin', 'technician', 'auditor'])
+})
+
+
+/**
+ * @summary Create an organization
+ */
+export const createAgonOrganizationBodyNameMax = 100;
+
+
+
+export const CreateAgonOrganizationBody = zod.object({
+  "name": zod.string().min(1).max(createAgonOrganizationBodyNameMax)
+})
+
+export const CreateAgonOrganizationResponse = zod.object({
+  "organization": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "role": zod.enum(['owner', 'admin', 'technician', 'auditor']),
+  "isPersonal": zod.boolean()
+})
+})
+
+
+/**
+ * @summary Accept a one-time organization invitation
+ */
+export const acceptAgonOrganizationInvitationBodyTokenMin = 40;
+export const acceptAgonOrganizationInvitationBodyTokenMax = 64;
+
+
+
+export const AcceptAgonOrganizationInvitationBody = zod.object({
+  "token": zod.string().min(acceptAgonOrganizationInvitationBodyTokenMin).max(acceptAgonOrganizationInvitationBodyTokenMax)
+})
+
+export const AcceptAgonOrganizationInvitationResponse = zod.object({
+  "organizationId": zod.string(),
+  "role": zod.enum(['owner', 'admin', 'technician', 'auditor'])
+})
+
+
+/**
+ * @summary Rename an organization
+ */
+export const RenameAgonOrganizationParams = zod.object({
+  "organizationId": zod.coerce.string()
+})
+
+export const renameAgonOrganizationBodyNameMax = 100;
+
+
+
+export const RenameAgonOrganizationBody = zod.object({
+  "name": zod.string().min(1).max(renameAgonOrganizationBodyNameMax)
+})
+
+export const RenameAgonOrganizationResponse = zod.object({
+  "organization": zod.object({
+  "id": zod.string(),
+  "name": zod.string(),
+  "role": zod.enum(['owner', 'admin', 'technician', 'auditor']),
+  "isPersonal": zod.boolean()
+})
+})
+
+
+/**
+ * @summary List organization members and roles
+ */
+export const ListAgonOrganizationMembersParams = zod.object({
+  "organizationId": zod.coerce.string()
+})
+
+export const ListAgonOrganizationMembersResponse = zod.object({
+  "members": zod.array(zod.object({
+  "userId": zod.string(),
+  "role": zod.enum(['owner', 'admin', 'technician', 'auditor']),
+  "joinedAt": zod.coerce.date()
+}))
+})
+
+
+/**
+ * @summary Change an organization member role
+ */
+export const UpdateAgonOrganizationMemberParams = zod.object({
+  "organizationId": zod.coerce.string(),
+  "memberId": zod.coerce.string()
+})
+
+export const UpdateAgonOrganizationMemberBody = zod.object({
+  "role": zod.enum(['admin', 'technician', 'auditor'])
+})
+
+export const UpdateAgonOrganizationMemberResponse = zod.object({
+  "userId": zod.string(),
+  "role": zod.enum(['owner', 'admin', 'technician', 'auditor']),
+  "joinedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Remove an organization member
+ */
+export const RemoveAgonOrganizationMemberParams = zod.object({
+  "organizationId": zod.coerce.string(),
+  "memberId": zod.coerce.string()
+})
+
+export const RemoveAgonOrganizationMemberResponse = zod.void()
+
+
+/**
+ * @summary List active organization invitations
+ */
+export const ListAgonOrganizationInvitationsParams = zod.object({
+  "organizationId": zod.coerce.string()
+})
+
+export const ListAgonOrganizationInvitationsResponse = zod.object({
+  "invitations": zod.array(zod.object({
+  "id": zod.string(),
+  "role": zod.enum(['owner', 'admin', 'technician', 'auditor']),
+  "createdAt": zod.coerce.date(),
+  "expiresAt": zod.coerce.date(),
+  "createdBy": zod.string()
+}))
+})
+
+
+/**
+ * @summary Create a one-time organization invitation
+ */
+export const CreateAgonOrganizationInvitationParams = zod.object({
+  "organizationId": zod.coerce.string()
+})
+
+export const CreateAgonOrganizationInvitationBody = zod.object({
+  "role": zod.enum(['admin', 'technician', 'auditor'])
+})
+
+export const CreateAgonOrganizationInvitationResponse = zod.object({
+  "invitation": zod.object({
+  "id": zod.string(),
+  "role": zod.enum(['owner', 'admin', 'technician', 'auditor']),
+  "createdAt": zod.coerce.date(),
+  "expiresAt": zod.coerce.date(),
+  "createdBy": zod.string()
+}),
+  "token": zod.string()
+})
+
+
+/**
+ * @summary Revoke an active organization invitation
+ */
+export const RevokeAgonOrganizationInvitationParams = zod.object({
+  "organizationId": zod.coerce.string(),
+  "invitationId": zod.coerce.string()
+})
+
+export const RevokeAgonOrganizationInvitationResponse = zod.void()
+
+
+/**
+ * @summary Get the organization access policy
+ */
+export const GetAgonOrganizationPolicyParams = zod.object({
+  "organizationId": zod.coerce.string()
+})
+
+export const getAgonOrganizationPolicyResponseOneAllowedGroupsItemMax = 80;
+
+
+
+export const GetAgonOrganizationPolicyResponse = zod.object({
+  "unattendedDesktopEnabled": zod.boolean(),
+  "allowedRoles": zod.array(zod.enum(['owner', 'admin', 'technician'])),
+  "allowedGroups": zod.array(zod.string().min(1).max(getAgonOrganizationPolicyResponseOneAllowedGroupsItemMax)),
+  "maxSessionMinutes": zod.union([zod.literal(15),zod.literal(30),zod.literal(60),zod.literal(120)])
+}).and(zod.object({
+  "updatedAt": zod.coerce.date(),
+  "updatedBy": zod.string()
+}))
+
+
+/**
+ * @summary Update the organization access policy
+ */
+export const UpdateAgonOrganizationPolicyParams = zod.object({
+  "organizationId": zod.coerce.string()
+})
+
+export const updateAgonOrganizationPolicyBodyAllowedGroupsItemMax = 80;
+
+
+
+export const UpdateAgonOrganizationPolicyBody = zod.object({
+  "unattendedDesktopEnabled": zod.boolean(),
+  "allowedRoles": zod.array(zod.enum(['owner', 'admin', 'technician'])),
+  "allowedGroups": zod.array(zod.string().min(1).max(updateAgonOrganizationPolicyBodyAllowedGroupsItemMax)),
+  "maxSessionMinutes": zod.union([zod.literal(15),zod.literal(30),zod.literal(60),zod.literal(120)])
+})
+
+export const updateAgonOrganizationPolicyResponseOneAllowedGroupsItemMax = 80;
+
+
+
+export const UpdateAgonOrganizationPolicyResponse = zod.object({
+  "unattendedDesktopEnabled": zod.boolean(),
+  "allowedRoles": zod.array(zod.enum(['owner', 'admin', 'technician'])),
+  "allowedGroups": zod.array(zod.string().min(1).max(updateAgonOrganizationPolicyResponseOneAllowedGroupsItemMax)),
+  "maxSessionMinutes": zod.union([zod.literal(15),zod.literal(30),zod.literal(60),zod.literal(120)])
+}).and(zod.object({
+  "updatedAt": zod.coerce.date(),
+  "updatedBy": zod.string()
+}))
+
+

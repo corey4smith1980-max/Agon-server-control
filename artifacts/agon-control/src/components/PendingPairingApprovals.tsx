@@ -11,11 +11,13 @@ interface PendingDevice {
   os: string
   arch: string
   agent: string
+  allowUnattended?: boolean
   requestedAt: string
 }
 
 export function PendingPairingApprovals() {
-  const { toast, syncControlPlane } = useAppStore()
+  const { toast, syncControlPlane, requestControlPlane, organizationRole } = useAppStore()
+  const canManagePairing = organizationRole === 'owner' || organizationRole === 'admin'
   const [devices, setDevices] = useState<PendingDevice[]>([])
   const [codes, setCodes] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -25,8 +27,7 @@ export function PendingPairingApprovals() {
   const loadPending = useCallback(async (showLoading = false) => {
     if (showLoading) setLoading(true)
     try {
-      const response = await fetch('/api/agon/pending-devices', {
-        credentials: 'same-origin',
+      const response = await requestControlPlane('/api/agon/pending-devices', {
         cache: 'no-store',
       })
       const result = await response.json()
@@ -38,7 +39,7 @@ export function PendingPairingApprovals() {
     } finally {
       if (showLoading) setLoading(false)
     }
-  }, [])
+  }, [requestControlPlane])
 
   useEffect(() => {
     void loadPending(true)
@@ -47,6 +48,10 @@ export function PendingPairingApprovals() {
   }, [loadPending])
 
   const approve = async (device: PendingDevice) => {
+    if (!canManagePairing) {
+      toast('Administrator access required', 'Only organization owners and administrators can approve endpoints.', 'warning')
+      return
+    }
     const pairingCode = codes[device.id]?.trim()
     if (!pairingCode) {
       toast('Pairing code required', 'Enter the code printed by the device installer.', 'warning')
@@ -54,9 +59,8 @@ export function PendingPairingApprovals() {
     }
     setWorkingId(device.id)
     try {
-      const response = await fetch(`/api/agon/pending-devices/${encodeURIComponent(device.id)}/approve`, {
+      const response = await requestControlPlane(`/api/agon/pending-devices/${encodeURIComponent(device.id)}/approve`, {
         method: 'POST',
-        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pairingCode }),
       })
@@ -78,11 +82,14 @@ export function PendingPairingApprovals() {
   }
 
   const ignore = async (device: PendingDevice) => {
+    if (!canManagePairing) {
+      toast('Administrator access required', 'Only organization owners and administrators can reject pairing requests.', 'warning')
+      return
+    }
     setWorkingId(device.id)
     try {
-      const response = await fetch(`/api/agon/pending-devices/${encodeURIComponent(device.id)}`, {
+      const response = await requestControlPlane(`/api/agon/pending-devices/${encodeURIComponent(device.id)}`, {
         method: 'DELETE',
-        credentials: 'same-origin',
       })
       const result = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(result.error || `Request failed (${response.status})`)
@@ -136,6 +143,11 @@ export function PendingPairingApprovals() {
                 <p className="text-sm font-medium text-white">{device.name}</p>
                 <p className="mt-1 text-[11px] text-slate-400">
                   {device.hostname} · {device.os} · {device.arch} · {device.group}
+                </p>
+                <p className={`mt-1 text-[10px] ${device.allowUnattended ? 'text-amber-300' : 'text-slate-600'}`}>
+                  {device.allowUnattended
+                    ? 'Installer explicitly opted into policy-controlled unattended desktop access.'
+                    : 'Interactive desktop consent only; unattended access is not enabled in this installer.'}
                 </p>
                 <p className="mt-1 text-[10px] text-slate-600">Requested {new Date(device.requestedAt).toLocaleString()}</p>
               </div>

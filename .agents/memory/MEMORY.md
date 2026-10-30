@@ -2,4 +2,4 @@
 - [Hosted native agent pairing headers](agon-agent-request-header.md) — support both published API prefixes; send `/deployment` as the native agent Referer.
 - [Agon relay stability](agon-relay-stability.md) — bound reconnect retries, detect half-open WebSockets, and recover stale queued work.
 - [Agon hosted relay choice](agon-hosted-relay-choice.md) — use the custom WSS relay on Replit; it is not RustDesk-protocol compatible.
-- [Agon enterprise roadmap](agon-enterprise-roadmap.md) — build broad authorized IT support capabilities; leave subscription billing for later organization and parent control.
+- [Agon enterprise roadmap](agon-enterprise-roadmap.md) — include organization roles and policy-gated unattended support; defer billing for organization and parent plans.

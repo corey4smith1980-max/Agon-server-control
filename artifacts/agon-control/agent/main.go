@@ -100,7 +100,7 @@ func main() {
 	server := flag.String("server", "", "control plane URL, for example https://relay.example.com")
 	name := flag.String("name", "", "display name (defaults to hostname)")
 	group := flag.String("group", "", "device group (defaults to the configuration or Unassigned)")
-	allowUnattended := flag.Bool("allow-unattended", false, "allow administrator-approved unattended diagnostic jobs")
+	allowUnattended := flag.Bool("allow-unattended", false, "opt this endpoint into organization-policy-approved unattended support")
 	pair := flag.Bool("pair", false, "create device identity and request operator approval")
 	install := flag.Bool("install", false, "install as a visible operating system service")
 	uninstall := flag.Bool("uninstall", false, "stop and remove the operating system service")
@@ -524,6 +524,27 @@ func runConnection(ctx context.Context, cfg *Config, configPath, channel string)
 		}
 		desktopMu.Unlock()
 	}()
+	startDesktop := func(sessionID string, unattended bool) {
+		desktopMu.Lock()
+		if stopDesktop != nil {
+			stopDesktop()
+		}
+		sessionCtx, stop := context.WithCancel(connectionCtx)
+		stopDesktop = stop
+		activeDesktopSession = sessionID
+		pauseDesktop = make(chan bool, 1)
+		pauseDesktop <- true
+		pauseSignal := pauseDesktop
+		desktopMu.Unlock()
+		go streamDesktopSession(sessionCtx, client, sessionID, pauseSignal)
+		if unattended {
+			log.Printf("organization-authorized unattended desktop session is active: session %s", sessionID)
+			log.Printf("*** UNATTENDED DESKTOP ACCESS ACTIVE: session %s; close this visible companion window to disconnect. ***", sessionID)
+		} else {
+			log.Printf("local user approved interactive support session %s", sessionID)
+			log.Printf("*** DESKTOP SHARING ACTIVE: session %s; close this visible companion window to disconnect. ***", sessionID)
+		}
+	}
 	for {
 		var message Envelope
 		if err := conn.ReadJSON(&message); err != nil {
@@ -537,9 +558,52 @@ func runConnection(ctx context.Context, cfg *Config, configPath, channel string)
 					Customer   string `json:"customer"`
 					Issue      string `json:"issue"`
 					Technician string `json:"technician"`
+					Mode       string `json:"mode"`
 				}
 				if err := json.Unmarshal(message.Payload, &request); err != nil || request.SessionID == "" {
 					_ = client.send(Envelope{Type: "command_result", JobID: message.JobID, Action: message.Action, Error: "Invalid desktop session request"})
+					continue
+				}
+				if request.Mode == "unattended" {
+					if !cfg.AllowUnattended {
+						_ = client.send(Envelope{
+							Type:   "command_result",
+							JobID:  message.JobID,
+							Action: message.Action,
+							Error:  "This endpoint was not explicitly opted in for unattended desktop access during installation.",
+						})
+						log.Printf("unattended desktop request rejected; endpoint installation opt-in is disabled")
+						continue
+					}
+					consentMu.Lock()
+					hasPendingConsent := pendingConsentSession != ""
+					consentMu.Unlock()
+					desktopMu.Lock()
+					hasOtherActiveSession := activeDesktopSession != "" && activeDesktopSession != request.SessionID
+					desktopMu.Unlock()
+					if hasPendingConsent || hasOtherActiveSession {
+						_ = client.send(Envelope{
+							Type:   "command_result",
+							JobID:  message.JobID,
+							Action: message.Action,
+							Error:  "Another desktop session is already active on this endpoint.",
+						})
+						continue
+					}
+					if err := client.send(Envelope{
+						Type:   "command_result",
+						JobID:  message.JobID,
+						Action: message.Action,
+						Result: map[string]any{"accepted": true, "unattended": true},
+					}); err != nil {
+						return err
+					}
+					log.Printf("unattended session request from %s: %s", request.Technician, request.Issue)
+					startDesktop(request.SessionID, true)
+					continue
+				}
+				if request.Mode != "" && request.Mode != "interactive" {
+					_ = client.send(Envelope{Type: "command_result", JobID: message.JobID, Action: message.Action, Error: "Unsupported desktop access mode"})
 					continue
 				}
 				consentMu.Lock()
@@ -572,20 +636,7 @@ func runConnection(ctx context.Context, cfg *Config, configPath, channel string)
 					if err := client.send(response); err != nil || !accepted {
 						return
 					}
-					desktopMu.Lock()
-					if stopDesktop != nil {
-						stopDesktop()
-					}
-					sessionCtx, stop := context.WithCancel(connectionCtx)
-					stopDesktop = stop
-					activeDesktopSession = request.SessionID
-					pauseDesktop = make(chan bool, 1)
-					pauseDesktop <- true
-					pauseSignal := pauseDesktop
-					desktopMu.Unlock()
-					go streamDesktopSession(sessionCtx, client, request.SessionID, pauseSignal)
-					log.Printf("local user approved interactive support session %s", request.SessionID)
-					log.Printf("*** DESKTOP SHARING ACTIVE: session %s; close this visible companion window to disconnect. ***", request.SessionID)
+					startDesktop(request.SessionID, false)
 				}()
 				continue
 			}

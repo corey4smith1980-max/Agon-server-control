@@ -34,10 +34,11 @@ function Brand() {
 }
 
 function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { devices, sessions, relays, settings } = useAppStore()
+  const { devices, sessions, relays, organizations, activeOrganizationId, organizationRole } = useAppStore()
   const { user } = useUser()
   const { signOut } = useClerk()
   const operatorName = user?.fullName || user?.primaryEmailAddress?.emailAddress || 'Agon operator'
+  const activeOrganizationName = organizations.find((item) => item.id === activeOrganizationId)?.name || 'My workspace'
   const operatorInitials = operatorName.split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'AG'
   const online = devices.filter((device) => device.status === 'online' || device.status === 'idle').length
   const waiting = sessions.filter((session) => session.status === 'waiting' || session.status === 'consent_required').length
@@ -64,7 +65,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
           {user?.imageUrl
             ? <img src={user.imageUrl} alt="" className="h-8 w-8 rounded-lg object-cover" />
             : <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-[#33443a] to-[#1c2922] text-[10px] font-semibold text-lime-200">{operatorInitials}</div>}
-          <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-medium text-slate-200">{operatorName}</p><p className="truncate text-[9px] text-slate-600">{settings.organization} · Operator</p></div>
+          <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-medium text-slate-200">{operatorName}</p><p className="truncate text-[9px] capitalize text-slate-600">{activeOrganizationName} · {organizationRole}</p></div>
           <button aria-label="Sign out" title="Sign out" onClick={() => void signOut({ redirectUrl: '/sign-in' })} className="rounded-lg p-2 text-slate-600 transition hover:bg-white/[0.05] hover:text-rose-200"><LogOut size={14}/></button>
         </div>
       </div>

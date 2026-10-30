@@ -25,11 +25,26 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AgonAcceptInvitationInput,
+  AgonAcceptInvitationResponse,
+  AgonAccessPolicyDecision,
+  AgonCreateInvitationInput,
+  AgonCreateOrganizationInput,
+  AgonCreatedInvitation,
   AgonError,
+  AgonOrganizationContext,
+  AgonOrganizationInvitations,
+  AgonOrganizationMember,
+  AgonOrganizationMembers,
+  AgonOrganizationPolicy,
+  AgonOrganizationPolicyInput,
+  AgonOrganizationResponse,
   AgonPairApproval,
   AgonPairApprovalInput,
   AgonPairRequestInput,
   AgonPairState,
+  AgonRenameOrganizationInput,
+  AgonUpdateMemberRoleInput,
   HealthStatus,
   PendingAgonDevices
 } from './api.schemas';
@@ -514,3 +529,1195 @@ export const useIgnoreAgonPendingDevice = <TError = ErrorType<AgonError>,
       > => {
       return useMutation(getIgnoreAgonPendingDeviceMutationOptions(options), queryClient);
     }
+
+export const getCheckAgonDeviceAccessPolicyUrl = (deviceId: string,) => {
+
+
+
+
+  return `/api/agon/devices/${deviceId}/access-policy`
+}
+
+/**
+ * @summary Check the active role and unattended access policy for a device
+ */
+export const checkAgonDeviceAccessPolicy = async (deviceId: string, options?: Parameters<typeof customFetch>[1]): Promise<AgonAccessPolicyDecision> => {
+
+  return customFetch<AgonAccessPolicyDecision>(getCheckAgonDeviceAccessPolicyUrl(deviceId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getCheckAgonDeviceAccessPolicyQueryKey = (deviceId: string,) => {
+    return [
+    `/api/agon/devices/${deviceId}/access-policy`
+    ] as const;
+    }
+
+
+export const getCheckAgonDeviceAccessPolicyQueryOptions = <TData = Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>, TError = ErrorType<unknown>>(deviceId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getCheckAgonDeviceAccessPolicyQueryKey(deviceId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>> = ({ signal }) => checkAgonDeviceAccessPolicy(deviceId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: deviceId !== null && deviceId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type CheckAgonDeviceAccessPolicyQueryResult = NonNullable<Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>>
+export type CheckAgonDeviceAccessPolicyQueryError = ErrorType<unknown>
+
+
+export function useCheckAgonDeviceAccessPolicy<TData = Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>, TError = ErrorType<unknown>>(
+ deviceId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>,
+          TError,
+          Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useCheckAgonDeviceAccessPolicy<TData = Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>, TError = ErrorType<unknown>>(
+ deviceId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>,
+          TError,
+          Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useCheckAgonDeviceAccessPolicy<TData = Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>, TError = ErrorType<unknown>>(
+ deviceId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Check the active role and unattended access policy for a device
+ */
+
+export function useCheckAgonDeviceAccessPolicy<TData = Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>, TError = ErrorType<unknown>>(
+ deviceId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof checkAgonDeviceAccessPolicy>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getCheckAgonDeviceAccessPolicyQueryOptions(deviceId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListAgonOrganizationsUrl = () => {
+
+
+
+
+  return `/api/agon/organizations`
+}
+
+/**
+ * @summary List organizations available to the signed-in user
+ */
+export const listAgonOrganizations = async ( options?: Parameters<typeof customFetch>[1]): Promise<AgonOrganizationContext> => {
+
+  return customFetch<AgonOrganizationContext>(getListAgonOrganizationsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAgonOrganizationsQueryKey = () => {
+    return [
+    `/api/agon/organizations`
+    ] as const;
+    }
+
+
+export const getListAgonOrganizationsQueryOptions = <TData = Awaited<ReturnType<typeof listAgonOrganizations>>, TError = ErrorType<unknown>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizations>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAgonOrganizationsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAgonOrganizations>>> = ({ signal }) => listAgonOrganizations({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizations>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListAgonOrganizationsQueryResult = NonNullable<Awaited<ReturnType<typeof listAgonOrganizations>>>
+export type ListAgonOrganizationsQueryError = ErrorType<unknown>
+
+
+export function useListAgonOrganizations<TData = Awaited<ReturnType<typeof listAgonOrganizations>>, TError = ErrorType<unknown>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizations>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAgonOrganizations>>,
+          TError,
+          Awaited<ReturnType<typeof listAgonOrganizations>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAgonOrganizations<TData = Awaited<ReturnType<typeof listAgonOrganizations>>, TError = ErrorType<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizations>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAgonOrganizations>>,
+          TError,
+          Awaited<ReturnType<typeof listAgonOrganizations>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAgonOrganizations<TData = Awaited<ReturnType<typeof listAgonOrganizations>>, TError = ErrorType<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizations>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List organizations available to the signed-in user
+ */
+
+export function useListAgonOrganizations<TData = Awaited<ReturnType<typeof listAgonOrganizations>>, TError = ErrorType<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizations>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListAgonOrganizationsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAgonOrganizationUrl = () => {
+
+
+
+
+  return `/api/agon/organizations`
+}
+
+/**
+ * @summary Create an organization
+ */
+export const createAgonOrganization = async (agonCreateOrganizationInput: AgonCreateOrganizationInput, options?: Parameters<typeof customFetch>[1]): Promise<AgonOrganizationResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AgonOrganizationResponse>(getCreateAgonOrganizationUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(agonCreateOrganizationInput)
+  }
+);}
+
+
+
+
+
+export const getCreateAgonOrganizationMutationKey = () => ['createAgonOrganization'] as const;
+
+export const getCreateAgonOrganizationMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAgonOrganization>>, TError,CreateAgonOrganizationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAgonOrganization>>, TError,CreateAgonOrganizationMutationVariables, TContext> => {
+
+const mutationKey = getCreateAgonOrganizationMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAgonOrganization>>, CreateAgonOrganizationMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createAgonOrganization(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAgonOrganizationMutationResult = NonNullable<Awaited<ReturnType<typeof createAgonOrganization>>>
+    export type CreateAgonOrganizationMutationBody = BodyType<AgonCreateOrganizationInput>
+    export type CreateAgonOrganizationMutationError = ErrorType<unknown>
+    export type CreateAgonOrganizationMutationVariables = {data: BodyType<AgonCreateOrganizationInput>}
+
+    /**
+ * @summary Create an organization
+ */
+export const useCreateAgonOrganization = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAgonOrganization>>, TError,CreateAgonOrganizationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createAgonOrganization>>,
+        TError,
+        CreateAgonOrganizationMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreateAgonOrganizationMutationOptions(options), queryClient);
+    }
+
+export const getAcceptAgonOrganizationInvitationUrl = () => {
+
+
+
+
+  return `/api/agon/organizations/invitations/accept`
+}
+
+/**
+ * @summary Accept a one-time organization invitation
+ */
+export const acceptAgonOrganizationInvitation = async (agonAcceptInvitationInput: AgonAcceptInvitationInput, options?: Parameters<typeof customFetch>[1]): Promise<AgonAcceptInvitationResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AgonAcceptInvitationResponse>(getAcceptAgonOrganizationInvitationUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(agonAcceptInvitationInput)
+  }
+);}
+
+
+
+
+
+export const getAcceptAgonOrganizationInvitationMutationKey = () => ['acceptAgonOrganizationInvitation'] as const;
+
+export const getAcceptAgonOrganizationInvitationMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acceptAgonOrganizationInvitation>>, TError,AcceptAgonOrganizationInvitationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof acceptAgonOrganizationInvitation>>, TError,AcceptAgonOrganizationInvitationMutationVariables, TContext> => {
+
+const mutationKey = getAcceptAgonOrganizationInvitationMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof acceptAgonOrganizationInvitation>>, AcceptAgonOrganizationInvitationMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  acceptAgonOrganizationInvitation(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AcceptAgonOrganizationInvitationMutationResult = NonNullable<Awaited<ReturnType<typeof acceptAgonOrganizationInvitation>>>
+    export type AcceptAgonOrganizationInvitationMutationBody = BodyType<AgonAcceptInvitationInput>
+    export type AcceptAgonOrganizationInvitationMutationError = ErrorType<unknown>
+    export type AcceptAgonOrganizationInvitationMutationVariables = {data: BodyType<AgonAcceptInvitationInput>}
+
+    /**
+ * @summary Accept a one-time organization invitation
+ */
+export const useAcceptAgonOrganizationInvitation = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof acceptAgonOrganizationInvitation>>, TError,AcceptAgonOrganizationInvitationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof acceptAgonOrganizationInvitation>>,
+        TError,
+        AcceptAgonOrganizationInvitationMutationVariables,
+        TContext
+      > => {
+      return useMutation(getAcceptAgonOrganizationInvitationMutationOptions(options), queryClient);
+    }
+
+export const getRenameAgonOrganizationUrl = (organizationId: string,) => {
+
+
+
+
+  return `/api/agon/organizations/${organizationId}`
+}
+
+/**
+ * @summary Rename an organization
+ */
+export const renameAgonOrganization = async (organizationId: string,
+    agonRenameOrganizationInput: AgonRenameOrganizationInput, options?: Parameters<typeof customFetch>[1]): Promise<AgonOrganizationResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AgonOrganizationResponse>(getRenameAgonOrganizationUrl(organizationId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(agonRenameOrganizationInput)
+  }
+);}
+
+
+
+
+
+export const getRenameAgonOrganizationMutationKey = () => ['renameAgonOrganization'] as const;
+
+export const getRenameAgonOrganizationMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof renameAgonOrganization>>, TError,RenameAgonOrganizationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof renameAgonOrganization>>, TError,RenameAgonOrganizationMutationVariables, TContext> => {
+
+const mutationKey = getRenameAgonOrganizationMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof renameAgonOrganization>>, RenameAgonOrganizationMutationVariables> = (props) => {
+          const {organizationId,data} = props ?? {};
+
+          return  renameAgonOrganization(organizationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RenameAgonOrganizationMutationResult = NonNullable<Awaited<ReturnType<typeof renameAgonOrganization>>>
+    export type RenameAgonOrganizationMutationBody = BodyType<AgonRenameOrganizationInput>
+    export type RenameAgonOrganizationMutationError = ErrorType<unknown>
+    export type RenameAgonOrganizationMutationVariables = {organizationId: string;data: BodyType<AgonRenameOrganizationInput>}
+
+    /**
+ * @summary Rename an organization
+ */
+export const useRenameAgonOrganization = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof renameAgonOrganization>>, TError,RenameAgonOrganizationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof renameAgonOrganization>>,
+        TError,
+        RenameAgonOrganizationMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRenameAgonOrganizationMutationOptions(options), queryClient);
+    }
+
+export const getListAgonOrganizationMembersUrl = (organizationId: string,) => {
+
+
+
+
+  return `/api/agon/organizations/${organizationId}/members`
+}
+
+/**
+ * @summary List organization members and roles
+ */
+export const listAgonOrganizationMembers = async (organizationId: string, options?: Parameters<typeof customFetch>[1]): Promise<AgonOrganizationMembers> => {
+
+  return customFetch<AgonOrganizationMembers>(getListAgonOrganizationMembersUrl(organizationId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAgonOrganizationMembersQueryKey = (organizationId: string,) => {
+    return [
+    `/api/agon/organizations/${organizationId}/members`
+    ] as const;
+    }
+
+
+export const getListAgonOrganizationMembersQueryOptions = <TData = Awaited<ReturnType<typeof listAgonOrganizationMembers>>, TError = ErrorType<unknown>>(organizationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizationMembers>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAgonOrganizationMembersQueryKey(organizationId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAgonOrganizationMembers>>> = ({ signal }) => listAgonOrganizationMembers(organizationId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: organizationId !== null && organizationId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizationMembers>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListAgonOrganizationMembersQueryResult = NonNullable<Awaited<ReturnType<typeof listAgonOrganizationMembers>>>
+export type ListAgonOrganizationMembersQueryError = ErrorType<unknown>
+
+
+export function useListAgonOrganizationMembers<TData = Awaited<ReturnType<typeof listAgonOrganizationMembers>>, TError = ErrorType<unknown>>(
+ organizationId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizationMembers>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAgonOrganizationMembers>>,
+          TError,
+          Awaited<ReturnType<typeof listAgonOrganizationMembers>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAgonOrganizationMembers<TData = Awaited<ReturnType<typeof listAgonOrganizationMembers>>, TError = ErrorType<unknown>>(
+ organizationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizationMembers>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAgonOrganizationMembers>>,
+          TError,
+          Awaited<ReturnType<typeof listAgonOrganizationMembers>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAgonOrganizationMembers<TData = Awaited<ReturnType<typeof listAgonOrganizationMembers>>, TError = ErrorType<unknown>>(
+ organizationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizationMembers>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List organization members and roles
+ */
+
+export function useListAgonOrganizationMembers<TData = Awaited<ReturnType<typeof listAgonOrganizationMembers>>, TError = ErrorType<unknown>>(
+ organizationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizationMembers>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListAgonOrganizationMembersQueryOptions(organizationId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateAgonOrganizationMemberUrl = (organizationId: string,
+    memberId: string,) => {
+
+
+
+
+  return `/api/agon/organizations/${organizationId}/members/${memberId}`
+}
+
+/**
+ * @summary Change an organization member role
+ */
+export const updateAgonOrganizationMember = async (organizationId: string,
+    memberId: string,
+    agonUpdateMemberRoleInput: AgonUpdateMemberRoleInput, options?: Parameters<typeof customFetch>[1]): Promise<AgonOrganizationMember> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AgonOrganizationMember>(getUpdateAgonOrganizationMemberUrl(organizationId,memberId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(agonUpdateMemberRoleInput)
+  }
+);}
+
+
+
+
+
+export const getUpdateAgonOrganizationMemberMutationKey = () => ['updateAgonOrganizationMember'] as const;
+
+export const getUpdateAgonOrganizationMemberMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAgonOrganizationMember>>, TError,UpdateAgonOrganizationMemberMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAgonOrganizationMember>>, TError,UpdateAgonOrganizationMemberMutationVariables, TContext> => {
+
+const mutationKey = getUpdateAgonOrganizationMemberMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAgonOrganizationMember>>, UpdateAgonOrganizationMemberMutationVariables> = (props) => {
+          const {organizationId,memberId,data} = props ?? {};
+
+          return  updateAgonOrganizationMember(organizationId,memberId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAgonOrganizationMemberMutationResult = NonNullable<Awaited<ReturnType<typeof updateAgonOrganizationMember>>>
+    export type UpdateAgonOrganizationMemberMutationBody = BodyType<AgonUpdateMemberRoleInput>
+    export type UpdateAgonOrganizationMemberMutationError = ErrorType<unknown>
+    export type UpdateAgonOrganizationMemberMutationVariables = {organizationId: string;memberId: string;data: BodyType<AgonUpdateMemberRoleInput>}
+
+    /**
+ * @summary Change an organization member role
+ */
+export const useUpdateAgonOrganizationMember = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAgonOrganizationMember>>, TError,UpdateAgonOrganizationMemberMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateAgonOrganizationMember>>,
+        TError,
+        UpdateAgonOrganizationMemberMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateAgonOrganizationMemberMutationOptions(options), queryClient);
+    }
+
+export const getRemoveAgonOrganizationMemberUrl = (organizationId: string,
+    memberId: string,) => {
+
+
+
+
+  return `/api/agon/organizations/${organizationId}/members/${memberId}`
+}
+
+/**
+ * @summary Remove an organization member
+ */
+export const removeAgonOrganizationMember = async (organizationId: string,
+    memberId: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getRemoveAgonOrganizationMemberUrl(organizationId,memberId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getRemoveAgonOrganizationMemberMutationKey = () => ['removeAgonOrganizationMember'] as const;
+
+export const getRemoveAgonOrganizationMemberMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeAgonOrganizationMember>>, TError,RemoveAgonOrganizationMemberMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof removeAgonOrganizationMember>>, TError,RemoveAgonOrganizationMemberMutationVariables, TContext> => {
+
+const mutationKey = getRemoveAgonOrganizationMemberMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeAgonOrganizationMember>>, RemoveAgonOrganizationMemberMutationVariables> = (props) => {
+          const {organizationId,memberId} = props ?? {};
+
+          return  removeAgonOrganizationMember(organizationId,memberId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RemoveAgonOrganizationMemberMutationResult = NonNullable<Awaited<ReturnType<typeof removeAgonOrganizationMember>>>
+
+    export type RemoveAgonOrganizationMemberMutationError = ErrorType<unknown>
+    export type RemoveAgonOrganizationMemberMutationVariables = {organizationId: string;memberId: string}
+
+    /**
+ * @summary Remove an organization member
+ */
+export const useRemoveAgonOrganizationMember = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeAgonOrganizationMember>>, TError,RemoveAgonOrganizationMemberMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof removeAgonOrganizationMember>>,
+        TError,
+        RemoveAgonOrganizationMemberMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRemoveAgonOrganizationMemberMutationOptions(options), queryClient);
+    }
+
+export const getListAgonOrganizationInvitationsUrl = (organizationId: string,) => {
+
+
+
+
+  return `/api/agon/organizations/${organizationId}/invitations`
+}
+
+/**
+ * @summary List active organization invitations
+ */
+export const listAgonOrganizationInvitations = async (organizationId: string, options?: Parameters<typeof customFetch>[1]): Promise<AgonOrganizationInvitations> => {
+
+  return customFetch<AgonOrganizationInvitations>(getListAgonOrganizationInvitationsUrl(organizationId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAgonOrganizationInvitationsQueryKey = (organizationId: string,) => {
+    return [
+    `/api/agon/organizations/${organizationId}/invitations`
+    ] as const;
+    }
+
+
+export const getListAgonOrganizationInvitationsQueryOptions = <TData = Awaited<ReturnType<typeof listAgonOrganizationInvitations>>, TError = ErrorType<unknown>>(organizationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizationInvitations>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAgonOrganizationInvitationsQueryKey(organizationId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAgonOrganizationInvitations>>> = ({ signal }) => listAgonOrganizationInvitations(organizationId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: organizationId !== null && organizationId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizationInvitations>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListAgonOrganizationInvitationsQueryResult = NonNullable<Awaited<ReturnType<typeof listAgonOrganizationInvitations>>>
+export type ListAgonOrganizationInvitationsQueryError = ErrorType<unknown>
+
+
+export function useListAgonOrganizationInvitations<TData = Awaited<ReturnType<typeof listAgonOrganizationInvitations>>, TError = ErrorType<unknown>>(
+ organizationId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizationInvitations>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAgonOrganizationInvitations>>,
+          TError,
+          Awaited<ReturnType<typeof listAgonOrganizationInvitations>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAgonOrganizationInvitations<TData = Awaited<ReturnType<typeof listAgonOrganizationInvitations>>, TError = ErrorType<unknown>>(
+ organizationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizationInvitations>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listAgonOrganizationInvitations>>,
+          TError,
+          Awaited<ReturnType<typeof listAgonOrganizationInvitations>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListAgonOrganizationInvitations<TData = Awaited<ReturnType<typeof listAgonOrganizationInvitations>>, TError = ErrorType<unknown>>(
+ organizationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizationInvitations>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List active organization invitations
+ */
+
+export function useListAgonOrganizationInvitations<TData = Awaited<ReturnType<typeof listAgonOrganizationInvitations>>, TError = ErrorType<unknown>>(
+ organizationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listAgonOrganizationInvitations>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListAgonOrganizationInvitationsQueryOptions(organizationId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateAgonOrganizationInvitationUrl = (organizationId: string,) => {
+
+
+
+
+  return `/api/agon/organizations/${organizationId}/invitations`
+}
+
+/**
+ * @summary Create a one-time organization invitation
+ */
+export const createAgonOrganizationInvitation = async (organizationId: string,
+    agonCreateInvitationInput: AgonCreateInvitationInput, options?: Parameters<typeof customFetch>[1]): Promise<AgonCreatedInvitation> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AgonCreatedInvitation>(getCreateAgonOrganizationInvitationUrl(organizationId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(agonCreateInvitationInput)
+  }
+);}
+
+
+
+
+
+export const getCreateAgonOrganizationInvitationMutationKey = () => ['createAgonOrganizationInvitation'] as const;
+
+export const getCreateAgonOrganizationInvitationMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAgonOrganizationInvitation>>, TError,CreateAgonOrganizationInvitationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAgonOrganizationInvitation>>, TError,CreateAgonOrganizationInvitationMutationVariables, TContext> => {
+
+const mutationKey = getCreateAgonOrganizationInvitationMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAgonOrganizationInvitation>>, CreateAgonOrganizationInvitationMutationVariables> = (props) => {
+          const {organizationId,data} = props ?? {};
+
+          return  createAgonOrganizationInvitation(organizationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAgonOrganizationInvitationMutationResult = NonNullable<Awaited<ReturnType<typeof createAgonOrganizationInvitation>>>
+    export type CreateAgonOrganizationInvitationMutationBody = BodyType<AgonCreateInvitationInput>
+    export type CreateAgonOrganizationInvitationMutationError = ErrorType<unknown>
+    export type CreateAgonOrganizationInvitationMutationVariables = {organizationId: string;data: BodyType<AgonCreateInvitationInput>}
+
+    /**
+ * @summary Create a one-time organization invitation
+ */
+export const useCreateAgonOrganizationInvitation = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAgonOrganizationInvitation>>, TError,CreateAgonOrganizationInvitationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createAgonOrganizationInvitation>>,
+        TError,
+        CreateAgonOrganizationInvitationMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreateAgonOrganizationInvitationMutationOptions(options), queryClient);
+    }
+
+export const getRevokeAgonOrganizationInvitationUrl = (organizationId: string,
+    invitationId: string,) => {
+
+
+
+
+  return `/api/agon/organizations/${organizationId}/invitations/${invitationId}`
+}
+
+/**
+ * @summary Revoke an active organization invitation
+ */
+export const revokeAgonOrganizationInvitation = async (organizationId: string,
+    invitationId: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getRevokeAgonOrganizationInvitationUrl(organizationId,invitationId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getRevokeAgonOrganizationInvitationMutationKey = () => ['revokeAgonOrganizationInvitation'] as const;
+
+export const getRevokeAgonOrganizationInvitationMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeAgonOrganizationInvitation>>, TError,RevokeAgonOrganizationInvitationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof revokeAgonOrganizationInvitation>>, TError,RevokeAgonOrganizationInvitationMutationVariables, TContext> => {
+
+const mutationKey = getRevokeAgonOrganizationInvitationMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof revokeAgonOrganizationInvitation>>, RevokeAgonOrganizationInvitationMutationVariables> = (props) => {
+          const {organizationId,invitationId} = props ?? {};
+
+          return  revokeAgonOrganizationInvitation(organizationId,invitationId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RevokeAgonOrganizationInvitationMutationResult = NonNullable<Awaited<ReturnType<typeof revokeAgonOrganizationInvitation>>>
+
+    export type RevokeAgonOrganizationInvitationMutationError = ErrorType<unknown>
+    export type RevokeAgonOrganizationInvitationMutationVariables = {organizationId: string;invitationId: string}
+
+    /**
+ * @summary Revoke an active organization invitation
+ */
+export const useRevokeAgonOrganizationInvitation = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeAgonOrganizationInvitation>>, TError,RevokeAgonOrganizationInvitationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof revokeAgonOrganizationInvitation>>,
+        TError,
+        RevokeAgonOrganizationInvitationMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRevokeAgonOrganizationInvitationMutationOptions(options), queryClient);
+    }
+
+export const getGetAgonOrganizationPolicyUrl = (organizationId: string,) => {
+
+
+
+
+  return `/api/agon/organizations/${organizationId}/policy`
+}
+
+/**
+ * @summary Get the organization access policy
+ */
+export const getAgonOrganizationPolicy = async (organizationId: string, options?: Parameters<typeof customFetch>[1]): Promise<AgonOrganizationPolicy> => {
+
+  return customFetch<AgonOrganizationPolicy>(getGetAgonOrganizationPolicyUrl(organizationId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAgonOrganizationPolicyQueryKey = (organizationId: string,) => {
+    return [
+    `/api/agon/organizations/${organizationId}/policy`
+    ] as const;
+    }
+
+
+export const getGetAgonOrganizationPolicyQueryOptions = <TData = Awaited<ReturnType<typeof getAgonOrganizationPolicy>>, TError = ErrorType<unknown>>(organizationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgonOrganizationPolicy>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAgonOrganizationPolicyQueryKey(organizationId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgonOrganizationPolicy>>> = ({ signal }) => getAgonOrganizationPolicy(organizationId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: organizationId !== null && organizationId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAgonOrganizationPolicy>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetAgonOrganizationPolicyQueryResult = NonNullable<Awaited<ReturnType<typeof getAgonOrganizationPolicy>>>
+export type GetAgonOrganizationPolicyQueryError = ErrorType<unknown>
+
+
+export function useGetAgonOrganizationPolicy<TData = Awaited<ReturnType<typeof getAgonOrganizationPolicy>>, TError = ErrorType<unknown>>(
+ organizationId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgonOrganizationPolicy>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAgonOrganizationPolicy>>,
+          TError,
+          Awaited<ReturnType<typeof getAgonOrganizationPolicy>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAgonOrganizationPolicy<TData = Awaited<ReturnType<typeof getAgonOrganizationPolicy>>, TError = ErrorType<unknown>>(
+ organizationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgonOrganizationPolicy>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAgonOrganizationPolicy>>,
+          TError,
+          Awaited<ReturnType<typeof getAgonOrganizationPolicy>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAgonOrganizationPolicy<TData = Awaited<ReturnType<typeof getAgonOrganizationPolicy>>, TError = ErrorType<unknown>>(
+ organizationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgonOrganizationPolicy>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Get the organization access policy
+ */
+
+export function useGetAgonOrganizationPolicy<TData = Awaited<ReturnType<typeof getAgonOrganizationPolicy>>, TError = ErrorType<unknown>>(
+ organizationId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgonOrganizationPolicy>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetAgonOrganizationPolicyQueryOptions(organizationId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateAgonOrganizationPolicyUrl = (organizationId: string,) => {
+
+
+
+
+  return `/api/agon/organizations/${organizationId}/policy`
+}
+
+/**
+ * @summary Update the organization access policy
+ */
+export const updateAgonOrganizationPolicy = async (organizationId: string,
+    agonOrganizationPolicyInput: AgonOrganizationPolicyInput, options?: Parameters<typeof customFetch>[1]): Promise<AgonOrganizationPolicy> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AgonOrganizationPolicy>(getUpdateAgonOrganizationPolicyUrl(organizationId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(agonOrganizationPolicyInput)
+  }
+);}
+
+
+
+
+
+export const getUpdateAgonOrganizationPolicyMutationKey = () => ['updateAgonOrganizationPolicy'] as const;
+
+export const getUpdateAgonOrganizationPolicyMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAgonOrganizationPolicy>>, TError,UpdateAgonOrganizationPolicyMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateAgonOrganizationPolicy>>, TError,UpdateAgonOrganizationPolicyMutationVariables, TContext> => {
+
+const mutationKey = getUpdateAgonOrganizationPolicyMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateAgonOrganizationPolicy>>, UpdateAgonOrganizationPolicyMutationVariables> = (props) => {
+          const {organizationId,data} = props ?? {};
+
+          return  updateAgonOrganizationPolicy(organizationId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateAgonOrganizationPolicyMutationResult = NonNullable<Awaited<ReturnType<typeof updateAgonOrganizationPolicy>>>
+    export type UpdateAgonOrganizationPolicyMutationBody = BodyType<AgonOrganizationPolicyInput>
+    export type UpdateAgonOrganizationPolicyMutationError = ErrorType<unknown>
+    export type UpdateAgonOrganizationPolicyMutationVariables = {organizationId: string;data: BodyType<AgonOrganizationPolicyInput>}
+
+    /**
+ * @summary Update the organization access policy
+ */
+export const useUpdateAgonOrganizationPolicy = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateAgonOrganizationPolicy>>, TError,UpdateAgonOrganizationPolicyMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof updateAgonOrganizationPolicy>>,
+        TError,
+        UpdateAgonOrganizationPolicyMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateAgonOrganizationPolicyMutationOptions(options), queryClient);
+    }
+

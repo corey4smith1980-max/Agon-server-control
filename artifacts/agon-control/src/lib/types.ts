@@ -23,6 +23,7 @@ export interface Device {
   user: string
   tags: string[]
   access: 'unattended' | 'interactive'
+  unattendedOptIn?: boolean
   location: string
   sample: boolean
 }
@@ -102,6 +103,36 @@ export interface AppSettings {
   sessionFallback: boolean
   bandwidthLimit: number
   sessionTimeout: number
+}
+
+export type OrganizationRole = 'owner' | 'admin' | 'technician' | 'auditor'
+
+export interface OrganizationSummary {
+  id: string
+  name: string
+  role: OrganizationRole
+  isPersonal: boolean
+}
+
+export interface OrganizationMember {
+  userId: string
+  role: OrganizationRole
+  joinedAt: string
+}
+
+export interface OrganizationInvitation {
+  id: string
+  role: OrganizationRole
+  createdAt: string
+  expiresAt: string
+  createdBy: string
+}
+
+export interface OrganizationPolicy {
+  unattendedDesktopEnabled: boolean
+  allowedRoles: OrganizationRole[]
+  allowedGroups: string[]
+  maxSessionMinutes: number
 }
 
 export interface ToastMessage {

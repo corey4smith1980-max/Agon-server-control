@@ -12,15 +12,18 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Trash2,
+  Users,
 } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { downloadText } from "../lib/utils";
 import { useAppStore } from "../store/AppStore";
 import { Badge, Button, Modal, PageHeader, Panel, Toggle } from "../components/UI";
+import OrganizationAccessPanel from "../components/OrganizationAccessPanel";
 
 const sections = [
   { id: "general", label: "General", icon: Building2, description: "Workspace identity and defaults" },
+  { id: "organization", label: "Organization & access", icon: Users, description: "Members, roles and access policy" },
   { id: "connection", label: "Control plane", icon: Server, description: "Hosted relay and live devices" },
   { id: "security", label: "Security policies", icon: ShieldCheck, description: "Consent and session safeguards" },
   { id: "data", label: "Data & workspace", icon: Database, description: "Export, retention and cache" },
@@ -28,6 +31,17 @@ const sections = [
 
 export default function Settings() {
   const {
+    userId,
+    organizations,
+    activeOrganizationId,
+    organizationRole,
+    organizationMembers,
+    organizationInvitations,
+    organizationPolicy,
+    organizationLoading,
+    organizationSaving,
+    organizationInviteLink,
+    organizationError,
     settings,
     updateSettings,
     devices,
@@ -36,6 +50,15 @@ export default function Settings() {
     audit,
     relays,
     syncControlPlane,
+    switchOrganization,
+    createOrganization,
+    renameOrganization,
+    createOrganizationInvitation,
+    acceptOrganizationInvitation,
+    revokeOrganizationInvitation,
+    updateOrganizationMemberRole,
+    removeOrganizationMember,
+    saveOrganizationPolicy,
     syncing,
     resetWorkspace,
     toast,
@@ -150,7 +173,7 @@ export default function Settings() {
               <div className="space-y-5 p-5 sm:p-6">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="label">Organization name</label>
+                    <label className="label">Browser-only workspace label</label>
                     <input
                       className="input"
                       value={settings.organization}
@@ -219,6 +242,33 @@ export default function Settings() {
                 </div>
               </div>
             </Panel>
+          )}
+
+          {section === "organization" && (
+            <OrganizationAccessPanel
+              organizations={organizations}
+              activeOrganizationId={activeOrganizationId}
+              currentUserId={userId}
+              currentRole={organizationRole}
+              members={organizationMembers}
+              invitations={organizationInvitations}
+              policy={organizationPolicy}
+              deviceGroups={[...new Set(devices.filter((device) => !device.sample).map((device) => device.group))].sort()}
+              loading={organizationLoading}
+              saving={organizationSaving}
+              inviteLink={organizationInviteLink}
+              error={organizationError}
+              onSwitchOrganization={switchOrganization}
+              onCreateOrganization={createOrganization}
+              onRenameOrganization={renameOrganization}
+              onCreateInvitation={createOrganizationInvitation}
+              onAcceptInvitation={acceptOrganizationInvitation}
+              onRevokeInvitation={revokeOrganizationInvitation}
+              onUpdateMemberRole={updateOrganizationMemberRole}
+              onRemoveMember={removeOrganizationMember}
+              onSavePolicy={saveOrganizationPolicy}
+              onRefresh={() => void syncControlPlane()}
+            />
           )}
 
           {section === "connection" && (

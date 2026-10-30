@@ -71,6 +71,7 @@ export interface PendingAgonDevice {
   os: string;
   arch: string;
   agent: string;
+  allowUnattended?: boolean;
   requestedAt: string;
 }
 
@@ -94,3 +95,156 @@ export interface AgonPairApproval {
 export interface AgonError {
   error: string;
 }
+
+export type AgonOrganizationRole = typeof AgonOrganizationRole[keyof typeof AgonOrganizationRole];
+
+
+export const AgonOrganizationRole = {
+  owner: 'owner',
+  admin: 'admin',
+  technician: 'technician',
+  auditor: 'auditor',
+} as const;
+
+export interface AgonOrganizationSummary {
+  id: string;
+  name: string;
+  role: AgonOrganizationRole;
+  isPersonal: boolean;
+}
+
+export interface AgonOrganizationContext {
+  organizations: AgonOrganizationSummary[];
+  activeOrganizationId: string;
+  currentRole: AgonOrganizationRole;
+}
+
+export interface AgonAccessPolicyDecision {
+  deviceId: string;
+  interactiveAllowed: boolean;
+  unattendedAllowed: boolean;
+  unattendedReason: string;
+  endpointOptIn: boolean;
+}
+
+export interface AgonCreateOrganizationInput {
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name: string;
+}
+
+export interface AgonRenameOrganizationInput {
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name: string;
+}
+
+export interface AgonOrganizationResponse {
+  organization: AgonOrganizationSummary;
+}
+
+export interface AgonAcceptInvitationInput {
+  /**
+     * @minLength 40
+     * @maxLength 64
+     */
+  token: string;
+}
+
+export interface AgonAcceptInvitationResponse {
+  organizationId: string;
+  role: AgonOrganizationRole;
+}
+
+export interface AgonOrganizationMember {
+  userId: string;
+  role: AgonOrganizationRole;
+  joinedAt: string;
+}
+
+export interface AgonOrganizationMembers {
+  members: AgonOrganizationMember[];
+}
+
+export type AgonUpdateMemberRoleInputRole = typeof AgonUpdateMemberRoleInputRole[keyof typeof AgonUpdateMemberRoleInputRole];
+
+
+export const AgonUpdateMemberRoleInputRole = {
+  admin: 'admin',
+  technician: 'technician',
+  auditor: 'auditor',
+} as const;
+
+export interface AgonUpdateMemberRoleInput {
+  role: AgonUpdateMemberRoleInputRole;
+}
+
+export interface AgonOrganizationInvitation {
+  id: string;
+  role: AgonOrganizationRole;
+  createdAt: string;
+  expiresAt: string;
+  createdBy: string;
+}
+
+export interface AgonOrganizationInvitations {
+  invitations: AgonOrganizationInvitation[];
+}
+
+export type AgonCreateInvitationInputRole = typeof AgonCreateInvitationInputRole[keyof typeof AgonCreateInvitationInputRole];
+
+
+export const AgonCreateInvitationInputRole = {
+  admin: 'admin',
+  technician: 'technician',
+  auditor: 'auditor',
+} as const;
+
+export interface AgonCreateInvitationInput {
+  role: AgonCreateInvitationInputRole;
+}
+
+export interface AgonCreatedInvitation {
+  invitation: AgonOrganizationInvitation;
+  token: string;
+}
+
+export type AgonOrganizationPolicyInputAllowedRolesItem = typeof AgonOrganizationPolicyInputAllowedRolesItem[keyof typeof AgonOrganizationPolicyInputAllowedRolesItem];
+
+
+export const AgonOrganizationPolicyInputAllowedRolesItem = {
+  owner: 'owner',
+  admin: 'admin',
+  technician: 'technician',
+} as const;
+
+export type AgonOrganizationPolicyInputMaxSessionMinutes = typeof AgonOrganizationPolicyInputMaxSessionMinutes[keyof typeof AgonOrganizationPolicyInputMaxSessionMinutes];
+
+
+export const AgonOrganizationPolicyInputMaxSessionMinutes = {
+  NUMBER_15: 15,
+  NUMBER_30: 30,
+  NUMBER_60: 60,
+  NUMBER_120: 120,
+} as const;
+
+export interface AgonOrganizationPolicyInput {
+  unattendedDesktopEnabled: boolean;
+  allowedRoles: AgonOrganizationPolicyInputAllowedRolesItem[];
+  /**
+     * @items.minLength 1
+     * @items.maxLength 80
+     */
+  allowedGroups: string[];
+  maxSessionMinutes: AgonOrganizationPolicyInputMaxSessionMinutes;
+}
+
+export type AgonOrganizationPolicy = AgonOrganizationPolicyInput & {
+  updatedAt: string;
+  updatedBy: string;
+};
+

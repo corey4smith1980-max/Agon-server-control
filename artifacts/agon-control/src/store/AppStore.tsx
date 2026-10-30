@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import { initialSettings } from '../lib/data'
-import type { AppSettings, AuditEvent, Device, Job, Platform, Relay, SupportSession, ToastMessage } from '../lib/types'
+import type { AppSettings, AuditEvent, Device, Job, OrganizationInvitation, OrganizationMember, OrganizationPolicy, OrganizationRole, OrganizationSummary, Platform, Relay, SupportSession, ToastMessage } from '../lib/types'
 
 interface SessionInput {
   customer: string
@@ -14,6 +14,17 @@ interface SessionInput {
 
 interface StoreValue {
   userId: string
+  organizations: OrganizationSummary[]
+  activeOrganizationId: string
+  organizationRole: OrganizationRole
+  organizationMembers: OrganizationMember[]
+  organizationInvitations: OrganizationInvitation[]
+  organizationPolicy: OrganizationPolicy
+  organizationLoading: boolean
+  organizationSaving: boolean
+  organizationInviteLink: string | null
+  organizationError: string | null
+  canStartSupportSessions: boolean
   devices: Device[]
   sessions: SupportSession[]
   relays: Relay[]
@@ -34,6 +45,17 @@ interface StoreValue {
   removeRelay: (id: string) => void
   testRelay: (id: string) => Promise<boolean>
   syncControlPlane: (silent?: boolean) => Promise<boolean>
+  switchOrganization: (id: string) => void
+  createOrganization: (name: string) => Promise<void>
+  renameOrganization: (name: string) => Promise<void>
+  createOrganizationInvitation: (role: OrganizationRole) => Promise<string>
+  acceptOrganizationInvitation: (tokenOrLink: string) => Promise<void>
+  revokeOrganizationInvitation: (id: string) => Promise<void>
+  updateOrganizationMemberRole: (memberId: string, role: OrganizationRole) => Promise<void>
+  removeOrganizationMember: (memberId: string) => Promise<void>
+  saveOrganizationPolicy: (policy: OrganizationPolicy) => Promise<void>
+  canRequestUnattended: (deviceId?: string) => boolean
+  requestControlPlane: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
   addAudit: (event: Omit<AuditEvent, 'id' | 'at'>) => void
   toast: (title: string, description?: string, tone?: ToastMessage['tone']) => void
   dismissToast: (id: string) => void
@@ -42,20 +64,47 @@ interface StoreValue {
 
 const StoreContext = createContext<StoreValue | null>(null)
 
-function usePersistentState<T>(key: string, initial: T) {
-  const [value, setValue] = useState<T>(() => {
-    try {
-      const stored = localStorage.getItem(key)
-      if (!stored) return initial
-      return JSON.parse(stored) as T
-    } catch { return initial }
-  })
+function readPersistentState<T>(key: string, initial: T): T {
+  try {
+    const stored = localStorage.getItem(key)
+    if (!stored) return initial
+    return JSON.parse(stored) as T
+  } catch { return initial }
+}
+
+function usePersistentState<T>(key: string, initial: T): [T, Dispatch<SetStateAction<T>>] {
+  const initialRef = useRef(initial)
+  const [entry, setEntry] = useState(() => ({
+    key,
+    value: readPersistentState(key, initialRef.current),
+  }))
   useEffect(() => {
+    if (entry.key !== key) setEntry({ key, value: readPersistentState(key, initialRef.current) })
+  }, [entry.key, key])
+  const value = entry.key === key ? entry.value : initialRef.current
+  const setValue: Dispatch<SetStateAction<T>> = useCallback((next) => {
+    setEntry((current) => {
+      const base = current.key === key ? current.value : readPersistentState(key, initialRef.current)
+      const updated = typeof next === 'function'
+        ? (next as (previous: T) => T)(base)
+        : next
+      return { key, value: updated }
+    })
+  }, [key])
+  useEffect(() => {
+    if (entry.key !== key) return
     try {
-      localStorage.setItem(key, JSON.stringify(value))
+      localStorage.setItem(key, JSON.stringify(entry.value))
     } catch { /* storage can be disabled */ }
-  }, [key, value])
-  return [value, setValue] as const
+  }, [entry, key])
+  return [value, setValue]
+}
+
+const defaultOrganizationPolicy: OrganizationPolicy = {
+  unattendedDesktopEnabled: false,
+  allowedRoles: ['owner', 'admin'],
+  allowedGroups: [],
+  maxSessionMinutes: 30,
 }
 
 function platformFromOs(os = ''): Platform {
@@ -85,15 +134,38 @@ function makeHostedRelay(): Relay[] {
 
 export function AppStoreProvider({ children, userId }: { children: ReactNode; userId: string }) {
   const scopedKey = (name: string) => `sc.${userId}.${name}.v2`
-  const [devices, setDevices] = usePersistentState<Device[]>(scopedKey('devices'), [])
-  const [sessions, setSessions] = usePersistentState<SupportSession[]>(scopedKey('sessions'), [])
-  const [relays, setRelays] = usePersistentState<Relay[]>(scopedKey('relays'), makeHostedRelay())
-  const [jobs, setJobs] = usePersistentState<Job[]>(scopedKey('jobs'), [])
-  const [audit, setAudit] = usePersistentState<AuditEvent[]>(scopedKey('audit'), [])
+  const [activeOrganizationId, setActiveOrganizationId] = usePersistentState(scopedKey('active-organization'), userId)
+  const organizationScopedKey = (name: string) => `sc.${userId}.${activeOrganizationId}.${name}.v3`
+  const [devices, setDevices] = usePersistentState<Device[]>(organizationScopedKey('devices'), [])
+  const [sessions, setSessions] = usePersistentState<SupportSession[]>(organizationScopedKey('sessions'), [])
+  const [relays, setRelays] = usePersistentState<Relay[]>(organizationScopedKey('relays'), makeHostedRelay())
+  const [jobs, setJobs] = usePersistentState<Job[]>(organizationScopedKey('jobs'), [])
+  const [audit, setAudit] = usePersistentState<AuditEvent[]>(organizationScopedKey('audit'), [])
   const [settings, setSettings] = usePersistentState<AppSettings>(scopedKey('settings'), initialSettings)
+  const [organizations, setOrganizations] = useState<OrganizationSummary[]>([])
+  const [organizationRole, setOrganizationRole] = useState<OrganizationRole>('owner')
+  const [organizationMembers, setOrganizationMembers] = useState<OrganizationMember[]>([])
+  const [organizationInvitations, setOrganizationInvitations] = useState<OrganizationInvitation[]>([])
+  const [organizationPolicy, setOrganizationPolicy] = useState<OrganizationPolicy>(defaultOrganizationPolicy)
+  const [organizationLoading, setOrganizationLoading] = useState(false)
+  const [organizationSaving, setOrganizationSaving] = useState(false)
+  const [organizationInviteLink, setOrganizationInviteLink] = useState<string | null>(null)
+  const [organizationError, setOrganizationError] = useState<string | null>(null)
   const [toasts, setToasts] = useState<ToastMessage[]>([])
   const [syncing, setSyncing] = useState(false)
   const syncInFlightRef = useRef(false)
+  const activeOrganizationIdRef = useRef(activeOrganizationId)
+  activeOrganizationIdRef.current = activeOrganizationId
+
+  const controlPlaneFetch = useCallback((input: RequestInfo | URL, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers)
+    if (activeOrganizationId) headers.set('X-Agon-Organization-Id', activeOrganizationId)
+    return fetch(input, {
+      ...init,
+      credentials: init.credentials ?? 'same-origin',
+      headers,
+    })
+  }, [activeOrganizationId])
 
   const dismissToast = useCallback((id: string) => setToasts((items) => items.filter((item) => item.id !== id)), [])
   const toast = useCallback((title: string, description?: string, tone: ToastMessage['tone'] = 'success') => {
@@ -117,9 +189,8 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
   const removeDevices = useCallback((ids: string[]) => {
     const names = devices.filter((item) => ids.includes(item.id)).map((item) => item.name)
     setDevices((items) => items.filter((item) => !ids.includes(item.id)))
-    void Promise.all(ids.map((id) => fetch(`/api/agon/devices/${encodeURIComponent(id)}`, {
+    void Promise.all(ids.map((id) => controlPlaneFetch(`/api/agon/devices/${encodeURIComponent(id)}`, {
       method: 'DELETE',
-      credentials: 'same-origin',
     }))).then((responses) => {
       const failed = responses.find((response) => !response.ok)
       if (failed) throw new Error(`Device removal failed (HTTP ${failed.status})`)
@@ -127,7 +198,7 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
       toast('Device removal failed', error instanceof Error ? error.message : 'Could not remove device', 'error')
     })
     toast('Device records removed', `${names.length} record${names.length === 1 ? '' : 's'} removed. Endpoint agents were not uninstalled.`, 'warning')
-  }, [devices, setDevices, toast])
+  }, [devices, setDevices, toast, controlPlaneFetch])
 
   const updateSession = useCallback((id: string, patch: Partial<SupportSession>) => {
     setSessions((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item))
@@ -135,9 +206,24 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
 
   const createSession = useCallback(async (input: SessionInput) => {
     const device = devices.find((item) => item.id === input.deviceId)
-    const response = await fetch('/api/agon/sessions', {
+    if (organizationRole === 'auditor') {
+      throw new Error('Auditor access is read-only and cannot start support sessions.')
+    }
+    if (input.access === 'unattended') {
+      const allowed = Boolean(
+        device &&
+        !device.sample &&
+        device.unattendedOptIn &&
+        organizationPolicy.unattendedDesktopEnabled &&
+        organizationPolicy.allowedRoles.includes(organizationRole) &&
+        organizationPolicy.allowedGroups.includes(device.group),
+      )
+      if (!allowed) {
+        throw new Error('Unattended access requires an opted-in endpoint and an organization policy that allows your role and device group.')
+      }
+    }
+    const response = await controlPlaneFetch('/api/agon/sessions', {
       method: 'POST',
-      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         deviceId: device?.sample ? undefined : device?.id,
@@ -169,12 +255,11 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
     setSessions((items) => [session, ...items])
     toast('Support session created', `${session.code} · ${session.deviceName}`)
     return session
-  }, [devices, setSessions, toast])
+  }, [devices, organizationRole, organizationPolicy, setSessions, toast, controlPlaneFetch])
 
   const connectSession = useCallback(async (id: string) => {
-    const response = await fetch(`/api/agon/sessions/${encodeURIComponent(id)}/connect`, {
+    const response = await controlPlaneFetch(`/api/agon/sessions/${encodeURIComponent(id)}/connect`, {
       method: 'POST',
-      credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     })
@@ -183,17 +268,16 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
     if (typeof data.viewerToken !== 'string') throw new Error('The relay did not return a viewer authorization.')
     setSessions((items) => items.map((session) => session.id === id ? { ...session, status: 'waiting' } : session))
     return { viewerToken: data.viewerToken as string }
-  }, [setSessions])
+  }, [setSessions, controlPlaneFetch])
 
   const endSession = useCallback(async (id: string) => {
-    const response = await fetch(`/api/agon/sessions/${encodeURIComponent(id)}/end`, {
+    const response = await controlPlaneFetch(`/api/agon/sessions/${encodeURIComponent(id)}/end`, {
       method: 'POST',
-      credentials: 'same-origin',
     })
     const data = await response.json().catch(() => ({}))
     if (!response.ok) throw new Error(data.error || `Could not end session (HTTP ${response.status})`)
     setSessions((items) => items.map((session) => session.id === id ? { ...session, status: 'ended' } : session))
-  }, [setSessions])
+  }, [setSessions, controlPlaneFetch])
 
   const runJob = useCallback(async (action: Job['action'], deviceIds: string[], name?: string) => {
     const selected = devices.filter((device) => deviceIds.includes(device.id))
@@ -208,8 +292,57 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
       actor: 'Operator', environment, results: {},
     }
     setJobs((items) => [job, ...items])
-    addAudit({ action: 'job.created', actor: 'Operator', target: selected.map((item) => item.name).join(', '), category: 'automation', severity: 'info', detail: `${action} dispatched through the ${environment === 'lab' ? 'local device emulator' : 'hosted control plane'}.`, ip: 'This browser' })
-    toast(environment === 'lab' ? 'Lab job started' : 'Job sent to relay', `${action} · ${selected.length} target${selected.length === 1 ? '' : 's'}`, 'info')
+    const isAccessPolicyCheck = action === 'session.request'
+    addAudit({
+      action: isAccessPolicyCheck ? 'access.policy.checked' : 'job.created',
+      actor: 'Operator',
+      target: selected.map((item) => item.name).join(', '),
+      category: isAccessPolicyCheck ? 'access' : 'automation',
+      severity: 'info',
+      detail: isAccessPolicyCheck
+        ? 'Requested a server-side access-policy check. No desktop session was opened.'
+        : `${action} dispatched through the ${environment === 'lab' ? 'local device emulator' : 'hosted control plane'}.`,
+      ip: 'This browser',
+    })
+    toast(isAccessPolicyCheck ? 'Checking access policy' : environment === 'lab' ? 'Lab job started' : 'Job sent to relay', `${action} · ${selected.length} target${selected.length === 1 ? '' : 's'}`, 'info')
+
+    if (action === 'session.request') {
+      const results: Record<string, string> = {}
+      if (environment === 'lab') {
+        for (const device of selected) {
+          results[device.name] = 'Lab record only; no live endpoint policy was evaluated.'
+        }
+      } else {
+        await Promise.all(real.map(async (device) => {
+          try {
+            const response = await controlPlaneFetch(
+              `/api/agon/devices/${encodeURIComponent(device.id)}/access-policy`,
+              { cache: 'no-store' },
+            )
+            const data = await response.json()
+            if (!response.ok) throw new Error(data.error || `Policy check failed (HTTP ${response.status})`)
+            const interactive = data.interactiveAllowed ? 'Interactive access available' : 'Interactive access blocked for this role'
+            const unattended = data.unattendedAllowed
+              ? 'Unattended access permitted by current server policy'
+              : `Unattended access blocked: ${String(data.unattendedReason || 'policy requirements are not met')}`
+            results[device.name] = `${interactive}; ${unattended}.`
+          } catch (error) {
+            results[device.name] = error instanceof Error ? error.message : 'Policy check failed.'
+          }
+        }))
+      }
+      const failed = Object.values(results).every((result) => result.includes('failed') || result.includes('blocked for this role'))
+      setJobs((items) => items.map((item) => item.id === id ? {
+        ...item,
+        status: failed ? 'failed' : 'completed',
+        progress: 100,
+        completedAt: new Date().toISOString(),
+        summary: 'Server-side access prerequisites checked; session connection rechecks policy.',
+        results,
+      } : item))
+      toast('Access policy check complete', `${real.length} live endpoint${real.length === 1 ? '' : 's'} checked. Session connection will recheck server policy.`, failed ? 'warning' : 'success')
+      return
+    }
 
     if (environment === 'lab') {
       window.setTimeout(() => setJobs((items) => items.map((item) => item.id === id ? { ...item, progress: 72 } : item)), 650)
@@ -234,9 +367,8 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
     let completed = 0
     await Promise.all(real.map(async (device) => {
       try {
-        const response = await fetch(`/api/agon/devices/${encodeURIComponent(device.id)}/commands`, {
+        const response = await controlPlaneFetch(`/api/agon/devices/${encodeURIComponent(device.id)}/commands`, {
           method: 'POST',
-          credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action, payload: { requestedBy: 'web-console' } }),
         })
@@ -259,7 +391,7 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
       results: { ...results }, remoteJobIds,
     } : item))
     toast(failedDispatches ? 'Some dispatches failed' : 'Commands accepted by relay', 'Endpoint results update automatically.', failedDispatches ? 'warning' : 'info')
-  }, [devices, setJobs, addAudit, toast])
+  }, [devices, setJobs, addAudit, toast, controlPlaneFetch])
 
   const addRelay = useCallback((input: Pick<Relay, 'name' | 'region' | 'city' | 'url'>) => {
     const id = input.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || crypto.randomUUID()
@@ -299,27 +431,69 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
     if (syncInFlightRef.current) return false
     syncInFlightRef.current = true
     setSyncing(true)
+    setOrganizationLoading(true)
     try {
-      const [deviceResponse, jobResponse, auditResponse, sessionResponse] = await Promise.all([
-        fetch('/api/agon/devices', { credentials: 'same-origin', cache: 'no-store' }),
-        fetch('/api/agon/jobs', { credentials: 'same-origin', cache: 'no-store' }),
-        fetch('/api/agon/audit?limit=500', { credentials: 'same-origin', cache: 'no-store' }),
-        fetch('/api/agon/sessions', { credentials: 'same-origin', cache: 'no-store' }),
+      const organizationResponse = await controlPlaneFetch('/api/agon/organizations', { cache: 'no-store' })
+      const organizationData = await organizationResponse.json().catch(() => ({}))
+      if (!organizationResponse.ok) {
+        throw new Error(organizationData.error || `Organization request failed (HTTP ${organizationResponse.status})`)
+      }
+      const availableOrganizations: OrganizationSummary[] = Array.isArray(organizationData.organizations)
+        ? organizationData.organizations
+        : []
+      setOrganizations(availableOrganizations)
+      const selectedOrganizationId = String(organizationData.activeOrganizationId || userId)
+      const selectedOrganization = availableOrganizations.find((item) => item.id === selectedOrganizationId)
+      setOrganizationRole(selectedOrganization?.role || 'owner')
+      if (selectedOrganizationId !== activeOrganizationId) {
+        setActiveOrganizationId(selectedOrganizationId)
+        return true
+      }
+
+      const organizationPath = `/api/agon/organizations/${encodeURIComponent(activeOrganizationId)}`
+      const [
+        deviceResponse,
+        jobResponse,
+        auditResponse,
+        sessionResponse,
+        memberResponse,
+        invitationResponse,
+        policyResponse,
+      ] = await Promise.all([
+        controlPlaneFetch('/api/agon/devices', { cache: 'no-store' }),
+        controlPlaneFetch('/api/agon/jobs', { cache: 'no-store' }),
+        controlPlaneFetch('/api/agon/audit?limit=500', { cache: 'no-store' }),
+        controlPlaneFetch('/api/agon/sessions', { cache: 'no-store' }),
+        controlPlaneFetch(`${organizationPath}/members`, { cache: 'no-store' }),
+        controlPlaneFetch(`${organizationPath}/invitations`, { cache: 'no-store' }),
+        controlPlaneFetch(`${organizationPath}/policy`, { cache: 'no-store' }),
       ])
-      const responses = [deviceResponse, jobResponse, auditResponse, sessionResponse]
+      if (activeOrganizationIdRef.current !== activeOrganizationId) return false
+      const responses = [
+        deviceResponse, jobResponse, auditResponse, sessionResponse,
+        memberResponse, invitationResponse, policyResponse,
+      ]
       const errorResponse = responses.find((response) => !response.ok)
       if (errorResponse) {
         const error = await errorResponse.json().catch(() => ({}))
         throw new Error(error.error || `HTTP ${errorResponse.status}`)
       }
-      const [deviceData, jobData, auditData, sessionData] = await Promise.all(responses.map((response) => response.json()))
+      const [
+        deviceData, jobData, auditData, sessionData,
+        memberData, invitationData, policyData,
+      ] = await Promise.all(responses.map((response) => response.json()))
+      setOrganizationMembers(Array.isArray(memberData.members) ? memberData.members : [])
+      setOrganizationInvitations(Array.isArray(invitationData.invitations) ? invitationData.invitations : [])
+      setOrganizationPolicy(policyData as OrganizationPolicy)
       const realDevices: Device[] = (Array.isArray(deviceData.devices) ? deviceData.devices : []).map((device: Record<string, unknown>) => ({
         id: String(device.id), name: String(device.name || device.hostname), hostname: String(device.hostname || device.name),
         platform: platformFromOs(String(device.os)), os: String(device.os || 'Unknown'), arch: String(device.arch || 'unknown'),
         group: String(device.group || 'Unassigned'), status: device.online ? 'online' : 'offline', ip: 'Reported by agent',
         lastSeen: String(device.lastSeen || device.pairedAt || device.enrolledAt || new Date().toISOString()), agentVersion: String(device.agent || 'unknown'),
         relay: String(device.relayId || 'relay'), cpu: 0, memory: 0, disk: 0, user: 'Managed endpoint', tags: ['paired'],
-        access: 'interactive', location: 'Not reported', sample: false,
+        access: device.allowUnattended === true ? 'unattended' : 'interactive',
+        unattendedOptIn: device.allowUnattended === true,
+        location: 'Not reported', sample: false,
       }))
       const deviceNames = new Map(realDevices.map((device) => [device.id, device.name]))
       const remoteJobs: Job[] = (Array.isArray(jobData.jobs) ? jobData.jobs : []).flatMap((job: Record<string, unknown>) => {
@@ -415,9 +589,243 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
       return false
     } finally {
       setSyncing(false)
+      setOrganizationLoading(false)
       syncInFlightRef.current = false
     }
-  }, [setDevices, setSessions, setJobs, setAudit, toast])
+  }, [
+    activeOrganizationId,
+    userId,
+    setActiveOrganizationId,
+    controlPlaneFetch,
+    setDevices,
+    setSessions,
+    setJobs,
+    setAudit,
+    toast,
+  ])
+
+  const organizationRequest = useCallback(async (path: string, init: RequestInit = {}) => {
+    const response = await controlPlaneFetch(path, init)
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(data.error || `Organization request failed (HTTP ${response.status})`)
+    }
+    return data
+  }, [controlPlaneFetch])
+
+  const switchOrganization = useCallback((id: string) => {
+    setActiveOrganizationId(id)
+    setOrganizationRole(organizations.find((item) => item.id === id)?.role || 'auditor')
+    setOrganizationInviteLink(null)
+    setOrganizationError(null)
+    setOrganizationMembers([])
+    setOrganizationInvitations([])
+    setOrganizationPolicy(defaultOrganizationPolicy)
+  }, [organizations, setActiveOrganizationId])
+
+  const createOrganization = useCallback(async (name: string) => {
+    setOrganizationSaving(true)
+    setOrganizationError(null)
+    try {
+      const result = await organizationRequest('/api/agon/organizations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      setOrganizations((items) => [...items, result.organization as OrganizationSummary])
+      setActiveOrganizationId(String(result.organization.id))
+      setOrganizationRole('owner')
+      toast('Organization created', `${name} is ready for invited operators.`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not create organization.'
+      setOrganizationError(message)
+      throw error
+    } finally {
+      setOrganizationSaving(false)
+    }
+  }, [organizationRequest, setActiveOrganizationId, toast])
+
+  const renameOrganization = useCallback(async (name: string) => {
+    setOrganizationSaving(true)
+    setOrganizationError(null)
+    try {
+      await organizationRequest(`/api/agon/organizations/${encodeURIComponent(activeOrganizationId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      setOrganizations((items) => items.map((item) => item.id === activeOrganizationId ? { ...item, name } : item))
+      toast('Organization updated', name)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not rename organization.'
+      setOrganizationError(message)
+      throw error
+    } finally {
+      setOrganizationSaving(false)
+    }
+  }, [activeOrganizationId, organizationRequest, toast])
+
+  const createOrganizationInvitation = useCallback(async (role: OrganizationRole) => {
+    setOrganizationSaving(true)
+    setOrganizationError(null)
+    try {
+      const result = await organizationRequest(
+        `/api/agon/organizations/${encodeURIComponent(activeOrganizationId)}/invitations`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role }),
+        },
+      )
+      const inviteUrl = new URL(window.location.href)
+      inviteUrl.searchParams.set('invite', String(result.token))
+      const link = inviteUrl.toString()
+      setOrganizationInviteLink(link)
+      toast('Invitation created', 'The one-time link is ready to copy and share securely.')
+      void syncControlPlane(true)
+      return link
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not create invitation.'
+      setOrganizationError(message)
+      throw error
+    } finally {
+      setOrganizationSaving(false)
+    }
+  }, [activeOrganizationId, organizationRequest, syncControlPlane, toast])
+
+  const acceptOrganizationInvitation = useCallback(async (tokenOrLink: string) => {
+    let token = tokenOrLink.trim()
+    try {
+      const url = new URL(token)
+      token = url.searchParams.get('invite') || url.searchParams.get('token') || token
+    } catch { /* a raw invitation token is also accepted */ }
+    if (token.length < 40) throw new Error('Paste a valid organization invitation link or token.')
+    setOrganizationSaving(true)
+    setOrganizationError(null)
+    try {
+      const result = await organizationRequest('/api/agon/organizations/invitations/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      })
+      const acceptedOrganizationId = String(result.organizationId)
+      setActiveOrganizationId(acceptedOrganizationId)
+      setOrganizationRole(result.role as OrganizationRole)
+      setOrganizationInviteLink(null)
+      const url = new URL(window.location.href)
+      url.searchParams.delete('invite')
+      window.history.replaceState({}, '', url)
+      toast('Invitation accepted', `You joined as ${String(result.role)}.`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not accept invitation.'
+      setOrganizationError(message)
+      throw error
+    } finally {
+      setOrganizationSaving(false)
+    }
+  }, [organizationRequest, setActiveOrganizationId, toast])
+
+  const revokeOrganizationInvitation = useCallback(async (id: string) => {
+    setOrganizationSaving(true)
+    setOrganizationError(null)
+    try {
+      await organizationRequest(
+        `/api/agon/organizations/${encodeURIComponent(activeOrganizationId)}/invitations/${encodeURIComponent(id)}`,
+        { method: 'DELETE' },
+      )
+      setOrganizationInvitations((items) => items.filter((item) => item.id !== id))
+      toast('Invitation revoked', 'The one-time link can no longer be used.')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not revoke invitation.'
+      setOrganizationError(message)
+      throw error
+    } finally {
+      setOrganizationSaving(false)
+    }
+  }, [activeOrganizationId, organizationRequest, toast])
+
+  const updateOrganizationMemberRole = useCallback(async (memberId: string, role: OrganizationRole) => {
+    setOrganizationSaving(true)
+    setOrganizationError(null)
+    try {
+      await organizationRequest(
+        `/api/agon/organizations/${encodeURIComponent(activeOrganizationId)}/members/${encodeURIComponent(memberId)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role }),
+        },
+      )
+      setOrganizationMembers((items) => items.map((member) => member.userId === memberId ? { ...member, role } : member))
+      toast('Member role updated', `${memberId} is now ${role}.`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not update member role.'
+      setOrganizationError(message)
+      throw error
+    } finally {
+      setOrganizationSaving(false)
+    }
+  }, [activeOrganizationId, organizationRequest, toast])
+
+  const removeOrganizationMember = useCallback(async (memberId: string) => {
+    setOrganizationSaving(true)
+    setOrganizationError(null)
+    try {
+      await organizationRequest(
+        `/api/agon/organizations/${encodeURIComponent(activeOrganizationId)}/members/${encodeURIComponent(memberId)}`,
+        { method: 'DELETE' },
+      )
+      setOrganizationMembers((items) => items.filter((member) => member.userId !== memberId))
+      toast('Member removed', `${memberId} can no longer access this organization.`, 'warning')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not remove organization member.'
+      setOrganizationError(message)
+      throw error
+    } finally {
+      setOrganizationSaving(false)
+    }
+  }, [activeOrganizationId, organizationRequest, toast])
+
+  const saveOrganizationPolicy = useCallback(async (policy: OrganizationPolicy) => {
+    setOrganizationSaving(true)
+    setOrganizationError(null)
+    try {
+      const saved = await organizationRequest(
+        `/api/agon/organizations/${encodeURIComponent(activeOrganizationId)}/policy`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(policy),
+        },
+      )
+      setOrganizationPolicy(saved as OrganizationPolicy)
+      toast('Access policy saved', policy.unattendedDesktopEnabled
+        ? 'Unattended access is limited to the allowed roles, groups, and session duration.'
+        : 'Unattended desktop sessions remain disabled.')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not save organization policy.'
+      setOrganizationError(message)
+      throw error
+    } finally {
+      setOrganizationSaving(false)
+    }
+  }, [activeOrganizationId, organizationRequest, toast])
+
+  const canRequestUnattended = useCallback((deviceId?: string) => {
+    if (
+      !organizationPolicy.unattendedDesktopEnabled ||
+      !organizationPolicy.allowedRoles.includes(organizationRole)
+    ) return false
+    const device = devices.find((item) => item.id === deviceId)
+    return Boolean(
+      device &&
+      !device.sample &&
+      device.unattendedOptIn &&
+      organizationPolicy.allowedGroups.includes(device.group),
+    )
+  }, [devices, organizationPolicy, organizationRole])
+
+  const canStartSupportSessions = organizationRole !== 'auditor'
 
   useEffect(() => {
     void syncControlPlane(true)
@@ -432,16 +840,53 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
     }
   }, [syncControlPlane])
 
+  const autoAcceptedInviteRef = useRef<string | null>(null)
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get('invite')
+    if (!token || autoAcceptedInviteRef.current === token) return
+    autoAcceptedInviteRef.current = token
+    void acceptOrganizationInvitation(token).catch((error) => {
+      toast('Invitation could not be accepted', error instanceof Error ? error.message : 'Check that you are signed in and that the link is valid.', 'error')
+    })
+  }, [acceptOrganizationInvitation, toast])
+
   const resetWorkspace = useCallback(() => {
     setDevices([]); setSessions([]); setRelays(makeHostedRelay()); setJobs([]); setAudit([]); setSettings(initialSettings)
     toast('Local cache cleared', 'Live server records and installed agents were not changed.', 'info')
   }, [setDevices, setSessions, setRelays, setJobs, setAudit, setSettings, toast])
 
   const value = useMemo<StoreValue>(() => ({
-    userId, devices, sessions, relays, jobs, audit, settings, toasts, syncing,
+    userId,
+    organizations,
+    activeOrganizationId,
+    organizationRole,
+    organizationMembers,
+    organizationInvitations,
+    organizationPolicy,
+    organizationLoading,
+    organizationSaving,
+    organizationInviteLink,
+    organizationError,
+    canStartSupportSessions,
+    devices, sessions, relays, jobs, audit, settings, toasts, syncing,
     updateSettings, updateDevice, removeDevices, createSession, connectSession, endSession, updateSession, runJob,
-    addRelay, removeRelay, testRelay, syncControlPlane, addAudit, toast, dismissToast, resetWorkspace,
-  }), [userId, devices, sessions, relays, jobs, audit, settings, toasts, syncing, updateSettings, updateDevice, removeDevices, createSession, connectSession, endSession, updateSession, runJob, addRelay, removeRelay, testRelay, syncControlPlane, addAudit, toast, dismissToast, resetWorkspace])
+    addRelay, removeRelay, testRelay, syncControlPlane,
+    switchOrganization, createOrganization, renameOrganization, createOrganizationInvitation,
+    acceptOrganizationInvitation, revokeOrganizationInvitation, updateOrganizationMemberRole,
+    removeOrganizationMember, saveOrganizationPolicy, canRequestUnattended,
+    requestControlPlane: controlPlaneFetch,
+    addAudit, toast, dismissToast, resetWorkspace,
+  }), [
+    userId, organizations, activeOrganizationId, organizationRole, organizationMembers,
+    organizationInvitations, organizationPolicy, organizationLoading, organizationSaving,
+    organizationInviteLink, organizationError, canStartSupportSessions, devices, sessions,
+    relays, jobs, audit, settings, toasts, syncing, updateSettings, updateDevice, removeDevices,
+    createSession, connectSession, endSession, updateSession, runJob, addRelay, removeRelay,
+    testRelay, syncControlPlane, switchOrganization, createOrganization, renameOrganization,
+    createOrganizationInvitation, acceptOrganizationInvitation, revokeOrganizationInvitation,
+    updateOrganizationMemberRole, removeOrganizationMember, saveOrganizationPolicy,
+    canRequestUnattended, controlPlaneFetch, addAudit, toast, dismissToast, resetWorkspace,
+  ])
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
 }

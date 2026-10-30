@@ -129,7 +129,7 @@ async function sha256(value: string | ArrayBuffer) {
 }
 
 export default function Deployment() {
-  const { settings, addAudit, toast, userId } = useAppStore()
+  const { settings, addAudit, toast, userId, activeOrganizationId, organizationRole } = useAppStore()
   const [platform, setPlatform] = useState<Platform>('windows')
   const [arch, setArch] = useState('amd64')
   const [group, setGroup] = useState(settings.defaultGroup)
@@ -140,6 +140,11 @@ export default function Deployment() {
   const [progress, setProgress] = useState(0)
   const [stage, setStage] = useState('')
   const [packageInfo, setPackageInfo] = useState<{ name: string; blob: Blob; sha: string; size: number } | null>(null)
+  const canOptInForUnattended = platform === 'windows' && (organizationRole === 'owner' || organizationRole === 'admin')
+
+  useEffect(() => {
+    if (!canOptInForUnattended && access === 'unattended') setAccess('interactive')
+  }, [access, canOptInForUnattended])
 
   useEffect(() => {
     loadAgentManifest().then(setManifest).catch((error) => setManifestError(error.message))
@@ -168,9 +173,9 @@ export default function Deployment() {
       const binaryHash = await sha256(binary)
       if (binaryHash !== currentArtifact.sha256) throw new Error('Agent checksum mismatch. Package generation stopped.')
       setProgress(24); setStage('Preparing relay and device policy')
-      if (!userId) throw new Error('Could not determine the signed-in operator account.')
+      if (!userId || !activeOrganizationId) throw new Error('Could not determine the signed-in organization.')
       const serverUrl = HOSTED_CONTROL_PLANE_URL
-      const config = JSON.stringify({ serverUrl, ownerId: userId, deviceName: '', group, allowUnattended: access === 'unattended' }, null, 2) + '\n'
+      const config = JSON.stringify({ serverUrl, ownerId: activeOrganizationId, deviceName: '', group, allowUnattended: canOptInForUnattended && access === 'unattended' }, null, 2) + '\n'
       const configHash = await sha256(config)
       const zip = new JSZip()
       const binaryName = platform === 'windows' ? 'agon-agent.exe' : 'agon-agent'
@@ -182,7 +187,7 @@ export default function Deployment() {
       else { scripts['install.sh'] = unixInstaller(platform); scripts['uninstall.sh'] = unixUninstaller(platform) }
       Object.entries(scripts).forEach(([name, content]) => zip.file(name, content, { unixPermissions: name.endsWith('.sh') ? 0o755 : undefined }))
       const instructions = platform === 'windows'
-        ? '1. Extract this ZIP on the managed Windows device.\n2. Run the saved install.ps1 file as administrator.\n3. Copy the pairing code printed by the installer.\n4. Enter that code in Agon Control → Pending pairing approvals.\n5. Confirm AgonAgent is running in services.msc and keep the visible Agon Desktop Companion window open.\n\nEach desktop session requires approval in a Windows consent dialog. The secure sign-in/UAC desktop is not shared.'
+        ? `1. Extract this ZIP on the managed Windows device.\n2. Run the saved install.ps1 file as administrator.\n3. Copy the pairing code printed by the installer.\n4. Enter that code in Agon Control → Pending pairing approvals.\n5. Confirm AgonAgent is running in services.msc and keep the visible Agon Desktop Companion window open.\n\n${access === 'unattended' ? 'This installer explicitly opts the endpoint into unattended sessions. An organization owner or administrator must also enable policy for this device group and your role. The visible companion remains open; sessions end at the policy duration limit.' : 'Each desktop session requires approval in a Windows consent dialog. The secure sign-in/UAC desktop is not shared.'}`
         : platform === 'android'
           ? '1. Enable Android debugging through your approved MDM or device administrator workflow.\n2. Connect the device and run: sh install-android.sh\n3. Copy the pairing code printed by the installer.\n4. Enter that code in Agon Control → Pending pairing approvals.\n\nThis ARM64 package uses ADB. It is not an APK and does not bypass Android security. Boot persistence requires explicit MDM provisioning.'
           : `1. Extract this ZIP on the managed ${platformLabel(platform)} device.\n2. Open Terminal in the extracted folder.\n3. Run: sh install.sh\n4. Copy the pairing code printed by the installer.\n5. Enter that code in Agon Control → Pending pairing approvals.\n\nThe service and configuration paths are printed by the installer.`
@@ -221,7 +226,7 @@ export default function Deployment() {
         <Panel className="p-5 sm:p-6">
           <span className="eyebrow">02 · Device pairing</span><h2 className="mt-2 font-display text-base font-semibold text-white">Connect automatically</h2><p className="mt-1 text-[11px] leading-5 text-slate-500">The agent creates a stable device identity and asks the signed-in operator to approve its first relay connection.</p>
           <div className="mt-5 rounded-xl border border-white/[0.06] bg-black/15 p-4"><div className="flex items-center gap-2 text-[11px] font-medium text-slate-200"><Server size={14} className="text-lime-300"/>Agon hosted control plane</div><p className="mt-2 break-all font-mono text-[10px] text-slate-500">{HOSTED_CONTROL_PLANE_URL}</p><p className="mt-2 text-[10px] leading-4 text-slate-600">Installer targets the published control plane. Use the published console to approve the device pairing code.</p><a className="mt-2 inline-block text-[10px] text-lime-200 underline underline-offset-2" href="https://agon-server-control.replit.app/deployment" target="_blank" rel="noreferrer">Open published deployment page</a></div>
-          <div className="mt-5 flex items-center justify-between gap-4 rounded-xl border border-white/[0.07] bg-white/[0.022] p-4"><div><p className="text-[12px] font-medium text-slate-200">Authorize unattended diagnostics</p><p className="mt-1 max-w-md text-[10px] leading-4 text-slate-500">Allows pre-authorized support requests. Leave off to require interactive endpoint approval.</p></div><Toggle checked={access === 'unattended'} onChange={(checked) => { setAccess(checked ? 'unattended' : 'interactive'); setPackageInfo(null) }} label="Allow unattended diagnostics"/></div>
+          <div className="mt-5 flex items-center justify-between gap-4 rounded-xl border border-white/[0.07] bg-white/[0.022] p-4"><div><p className="text-[12px] font-medium text-slate-200">Opt this installer into unattended desktop support</p><p className="mt-1 max-w-md text-[10px] leading-4 text-slate-500">Windows only. Requires an owner/admin-built installer, explicit endpoint opt-in, and a separate organization policy for roles and device groups. The visible companion stays open.</p>{!canOptInForUnattended && <p className="mt-1 text-[10px] text-amber-300">Only organization owners and administrators can build a Windows package with this opt-in.</p>}</div><Toggle checked={access === 'unattended'} onChange={(checked) => { setAccess(checked ? 'unattended' : 'interactive'); setPackageInfo(null) }} label="Opt in for unattended desktop support" disabled={!canOptInForUnattended}/></div>
         </Panel>
       </div>
       <div className="space-y-4">

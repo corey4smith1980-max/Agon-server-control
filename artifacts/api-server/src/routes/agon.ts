@@ -13,6 +13,18 @@ import {
 import { pool } from "@workspace/db";
 import { addAudit, createRecord, getRecord, getRecordById, listRecords } from "../lib/agonStore";
 import {
+  acceptOrganizationInvitation,
+  createOrganization,
+  createOrganizationInvitation,
+  ensurePersonalOrganization,
+  getOrganizationRole,
+  listOrganizationInvitations,
+  listOrganizationMembers,
+  listUserOrganizations,
+  organizationRoles,
+  type OrganizationRole,
+} from "../lib/organizationStore";
+import {
   disconnectAgonDevice,
   endAgonDesktopSession,
   hasOtherActiveDesktopSession,
@@ -25,7 +37,6 @@ const allowedActions = new Set([
   "agent.ping",
   "inventory.refresh",
   "diagnostics.network",
-  "session.request",
 ]);
 
 const requireOperator: RequestHandler = (request, response, next) => {
@@ -34,12 +45,66 @@ const requireOperator: RequestHandler = (request, response, next) => {
     response.status(401).json({ error: "Sign in to access your control plane." });
     return;
   }
-  response.locals.ownerId = userId;
+  response.locals.userId = userId;
   next();
 };
 
 function ownerId(response: Parameters<RequestHandler>[1]): string {
   return response.locals.ownerId as string;
+}
+
+function userId(response: Parameters<RequestHandler>[1]): string {
+  return response.locals.userId as string;
+}
+
+function currentRole(response: Parameters<RequestHandler>[1]): OrganizationRole {
+  return response.locals.organizationRole as OrganizationRole;
+}
+
+const resolveOrganization: RequestHandler = async (request, response, next) => {
+  const operatorId = userId(response);
+  const requestedId = cleanText(
+    request.get("X-Agon-Organization-Id"),
+    128,
+    operatorId,
+  ) || operatorId;
+  if (requestedId === operatorId) {
+    await ensurePersonalOrganization(operatorId);
+  }
+  const role = await getOrganizationRole(requestedId, operatorId);
+  if (!role || !organizationRoles.includes(role)) {
+    response.status(403).json({ error: "You are not a member of this organization." });
+    return;
+  }
+  response.locals.ownerId = requestedId;
+  response.locals.organizationRole = role;
+  next();
+};
+
+function requireRoles(...roles: OrganizationRole[]): RequestHandler {
+  return async (request, response, next) => {
+    if (!roles.includes(currentRole(response))) {
+      await addAudit(ownerId(response), "authorization.denied", {
+        method: request.method,
+        path: request.path,
+        role: currentRole(response),
+      }, "warning", userId(response));
+      response.status(403).json({ error: "Your organization role does not allow this action." });
+      return;
+    }
+    next();
+  };
+}
+
+function pathOrganizationMatches(
+  request: Parameters<RequestHandler>[0],
+  response: Parameters<RequestHandler>[1],
+): boolean {
+  if (cleanText(request.params.organizationId, 128) !== ownerId(response)) {
+    response.status(404).json({ error: "Organization not found." });
+    return false;
+  }
+  return true;
 }
 
 function cleanText(value: unknown, limit: number, fallback = ""): string {
@@ -56,6 +121,170 @@ function withoutViewerCredentials(data: Record<string, unknown>): Record<string,
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
+}
+
+const maxUnattendedSessionMinutes = new Set([15, 30, 60, 120]);
+const unattendedRoles = new Set<OrganizationRole>(["owner", "admin", "technician"]);
+
+type OrganizationPolicy = {
+  unattendedDesktopEnabled: boolean;
+  allowedRoles: OrganizationRole[];
+  allowedGroups: string[];
+  maxSessionMinutes: number;
+  updatedAt: string;
+  updatedBy: string;
+};
+
+async function getOrganizationPolicy(organizationId: string): Promise<OrganizationPolicy> {
+  let result = await pool.query<{
+    unattended_desktop_enabled: boolean;
+    allowed_roles: unknown;
+    allowed_groups: unknown;
+    max_session_minutes: number;
+    updated_at: Date;
+    updated_by: string;
+  }>(
+    `SELECT unattended_desktop_enabled, allowed_roles, allowed_groups,
+            max_session_minutes, updated_at, updated_by
+     FROM agon_organization_policies WHERE organization_id = $1`,
+    [organizationId],
+  );
+  if (!result.rows[0]) {
+    await pool.query(
+      `INSERT INTO agon_organization_policies
+         (organization_id, unattended_desktop_enabled, allowed_roles,
+          allowed_groups, max_session_minutes, updated_by)
+       VALUES ($1, FALSE, '["owner","admin"]'::jsonb, '[]'::jsonb, 30, 'system')
+       ON CONFLICT (organization_id) DO NOTHING`,
+      [organizationId],
+    );
+    result = await pool.query(
+      `SELECT unattended_desktop_enabled, allowed_roles, allowed_groups,
+              max_session_minutes, updated_at, updated_by
+       FROM agon_organization_policies WHERE organization_id = $1`,
+      [organizationId],
+    );
+  }
+  const stored = result.rows[0];
+  if (
+    !stored ||
+    typeof stored.unattended_desktop_enabled !== "boolean" ||
+    !Array.isArray(stored.allowed_roles) ||
+    !Array.isArray(stored.allowed_groups) ||
+    !maxUnattendedSessionMinutes.has(Number(stored.max_session_minutes))
+  ) {
+    throw new Error("Stored organization access policy is invalid.");
+  }
+  const allowedRoles = stored.allowed_roles.filter(
+    (role): role is OrganizationRole =>
+      typeof role === "string" && unattendedRoles.has(role as OrganizationRole),
+  );
+  const allowedGroups = stored.allowed_groups.filter(
+    (group): group is string => typeof group === "string",
+  );
+  return {
+    unattendedDesktopEnabled: stored.unattended_desktop_enabled,
+    allowedRoles,
+    allowedGroups,
+    maxSessionMinutes: Number(stored.max_session_minutes),
+    updatedAt: stored.updated_at.toISOString(),
+    updatedBy: stored.updated_by,
+  };
+}
+
+async function checkUnattendedAccess(
+  organizationId: string,
+  role: OrganizationRole,
+  device: { data: Record<string, unknown> } | null,
+): Promise<{ allowed: boolean; reason: string; policy: OrganizationPolicy }> {
+  const policy = await getOrganizationPolicy(organizationId);
+  if (!device) return { allowed: false, reason: "Choose a managed endpoint first.", policy };
+  if (device.data.allowUnattended !== true) {
+    return {
+      allowed: false,
+      reason: "This endpoint was not explicitly opted in when its installer was built.",
+      policy,
+    };
+  }
+  if (!policy.unattendedDesktopEnabled) {
+    return { allowed: false, reason: "Organization unattended desktop policy is disabled.", policy };
+  }
+  if (!policy.allowedRoles.includes(role)) {
+    return { allowed: false, reason: "Your organization role is not allowed by the unattended access policy.", policy };
+  }
+  const group = cleanText(device.data.group, 80, "Unassigned") || "Unassigned";
+  if (!policy.allowedGroups.includes(group)) {
+    return { allowed: false, reason: "This endpoint's device group is not allowed by the unattended access policy.", policy };
+  }
+  return { allowed: true, reason: "", policy };
+}
+
+const openSupportSessionStatuses = new Set([
+  "waiting",
+  "consent_required",
+  "accepted",
+  "active",
+  "disconnected",
+]);
+
+async function closeOrganizationSessions(
+  organizationId: string,
+  reason: string,
+  actor: string,
+  options: {
+    createdBy?: string;
+    includeInteractive?: boolean;
+    enforceCurrentPolicy?: boolean;
+    endUnattended?: boolean;
+  } = {},
+): Promise<void> {
+  const sessions = await listRecords(organizationId, "session", 1000);
+  const policy = options.enforceCurrentPolicy ? await getOrganizationPolicy(organizationId) : null;
+  for (const session of sessions) {
+    const data = session.data;
+    if (!openSupportSessionStatuses.has(String(data.status))) continue;
+    if (options.createdBy && data.createdBy !== options.createdBy) continue;
+    if (data.mode !== "unattended" && !options.includeInteractive) continue;
+    if (policy && data.mode === "unattended" && !options.endUnattended) {
+      const creator = typeof data.createdBy === "string" ? data.createdBy : "";
+      const creatorRole = creator ? await getOrganizationRole(organizationId, creator) : null;
+      const deviceId = typeof data.deviceId === "string" ? data.deviceId : "";
+      const device = deviceId ? await getRecord(organizationId, "device", deviceId) : null;
+      const group = cleanText(device?.data.group, 80, "Unassigned") || "Unassigned";
+      if (
+        policy.unattendedDesktopEnabled &&
+        creatorRole &&
+        policy.allowedRoles.includes(creatorRole) &&
+        policy.allowedGroups.includes(group) &&
+        device?.data.allowUnattended === true
+      ) continue;
+    }
+    const endedAt = new Date().toISOString();
+    const update = await pool.query(
+      `UPDATE agon_records
+       SET data = data || jsonb_build_object(
+             'status', 'ended',
+             'consentRequestId', NULL,
+             'viewerTokenHash', NULL,
+             'viewerTokenExpiresAt', NULL,
+             'endedAt', $1,
+             'endReason', $2,
+             'updatedAt', $1
+           ),
+           updated_at = NOW()
+       WHERE id = $3 AND owner_id = $4 AND kind = 'session'
+         AND data->>'status' IN ('waiting', 'consent_required', 'accepted', 'active', 'disconnected')`,
+      [endedAt, reason, session.id, organizationId],
+    );
+    if (!update.rowCount) continue;
+    const deviceId = typeof data.deviceId === "string" ? data.deviceId : "";
+    if (deviceId) endAgonDesktopSession(session.id, deviceId);
+    await addAudit(organizationId, "session.access.revoked", {
+      sessionId: session.id,
+      deviceId: deviceId || null,
+      reason,
+    }, "warning", actor);
+  }
 }
 
 function normalizedPairingCode(value: unknown): string {
@@ -125,6 +354,14 @@ router.post("/api/pair-requests", async (request, response) => {
   const deviceInfo = input.device;
   if (pairingCode.length !== 16) {
     response.status(400).json({ error: "Device pairing code is invalid." });
+    return;
+  }
+  const organization = await pool.query(
+    `SELECT id FROM agon_organizations WHERE id = $1 LIMIT 1`,
+    [owner],
+  );
+  if (!organization.rowCount) {
+    response.status(404).json({ error: "The installer organization no longer exists." });
     return;
   }
 
@@ -204,6 +441,325 @@ router.post("/api/pair-requests", async (request, response) => {
 
 router.use(requireOperator);
 
+router.get("/organizations", async (request, response) => {
+  const operatorId = userId(response);
+  await ensurePersonalOrganization(operatorId);
+  const organizations = await listUserOrganizations(operatorId);
+  const requestedId = cleanText(request.get("X-Agon-Organization-Id"), 128);
+  const active = organizations.find((organization) => organization.id === requestedId)
+    ?? organizations.find((organization) => organization.isPersonal)
+    ?? organizations[0];
+  if (!active) {
+    response.status(500).json({ error: "No organization is available for this account." });
+    return;
+  }
+  response.setHeader("Cache-Control", "no-store");
+  response.json({
+    organizations,
+    activeOrganizationId: active.id,
+    currentRole: active.role,
+  });
+});
+
+router.post("/organizations", async (request, response) => {
+  const name = cleanText(request.body?.name, 100);
+  if (!name) {
+    response.status(400).json({ error: "Enter an organization name." });
+    return;
+  }
+  const organization = await createOrganization(userId(response), name);
+  await addAudit(organization.id, "organization.created", {
+    organizationId: organization.id,
+    name,
+  }, "success", userId(response));
+  response.status(201).json({ organization });
+});
+
+router.post("/organizations/invitations/accept", async (request, response) => {
+  const token = cleanText(request.body?.token, 64);
+  if (token.length < 40) {
+    response.status(400).json({ error: "The invitation token is invalid or expired." });
+    return;
+  }
+  const accepted = await acceptOrganizationInvitation(userId(response), token);
+  if (!accepted) {
+    response.status(404).json({ error: "The invitation is invalid, expired, revoked, or already used." });
+    return;
+  }
+  await addAudit(accepted.organizationId, "organization.invitation.accepted", {
+    organizationId: accepted.organizationId,
+    role: accepted.role,
+  }, "success", userId(response));
+  response.json(accepted);
+});
+
+router.use(resolveOrganization);
+
+router.patch("/organizations/:organizationId", requireRoles("owner", "admin"), async (request, response) => {
+  if (!pathOrganizationMatches(request, response)) return;
+  const name = cleanText(request.body?.name, 100);
+  if (!name) {
+    response.status(400).json({ error: "Enter an organization name." });
+    return;
+  }
+  const result = await pool.query<{
+    id: string;
+    name: string;
+    role: OrganizationRole;
+    isPersonal: boolean;
+  }>(
+    `UPDATE agon_organizations SET name = $1, updated_at = NOW()
+     WHERE id = $2
+     RETURNING id, name, is_personal AS "isPersonal"`,
+    [name, ownerId(response)],
+  );
+  const organization = result.rows[0];
+  if (!organization) {
+    response.status(404).json({ error: "Organization not found." });
+    return;
+  }
+  organization.role = currentRole(response);
+  await addAudit(ownerId(response), "organization.renamed", {
+    organizationId: ownerId(response),
+    name,
+  }, "info", userId(response));
+  response.json({ organization });
+});
+
+router.get("/organizations/:organizationId/members", async (request, response) => {
+  if (!pathOrganizationMatches(request, response)) return;
+  response.setHeader("Cache-Control", "no-store");
+  response.json({ members: await listOrganizationMembers(ownerId(response)) });
+});
+
+router.patch(
+  "/organizations/:organizationId/members/:memberId",
+  requireRoles("owner", "admin"),
+  async (request, response) => {
+    if (!pathOrganizationMatches(request, response)) return;
+    const targetUserId = cleanText(request.params.memberId, 128);
+    const requestedRole = cleanText(request.body?.role, 24);
+    if (!organizationRoles.includes(requestedRole as OrganizationRole) || requestedRole === "owner") {
+      response.status(400).json({ error: "Select a valid organization role." });
+      return;
+    }
+    const existing = await pool.query<{ role: OrganizationRole }>(
+      `SELECT role FROM agon_organization_memberships
+       WHERE organization_id = $1 AND user_id = $2`,
+      [ownerId(response), targetUserId],
+    );
+    const target = existing.rows[0];
+    if (!target || target.role === "owner") {
+      response.status(404).json({ error: "This member cannot be changed." });
+      return;
+    }
+    if (currentRole(response) === "admin" &&
+        (target.role === "admin" || requestedRole === "admin")) {
+      response.status(403).json({ error: "Only an owner can change administrator roles." });
+      return;
+    }
+    const result = await pool.query<{ userId: string; role: OrganizationRole; joinedAt: Date }>(
+      `UPDATE agon_organization_memberships SET role = $1
+       WHERE organization_id = $2 AND user_id = $3
+       RETURNING user_id AS "userId", role, joined_at AS "joinedAt"`,
+      [requestedRole, ownerId(response), targetUserId],
+    );
+    const member = result.rows[0];
+    if (!member) {
+      response.status(404).json({ error: "Organization member not found." });
+      return;
+    }
+    await addAudit(ownerId(response), "organization.member.role_changed", {
+      userId: targetUserId,
+      previousRole: target.role,
+      role: requestedRole,
+    }, "info", userId(response));
+    await closeOrganizationSessions(
+      ownerId(response),
+      "member_role_changed",
+      userId(response),
+      {
+        createdBy: targetUserId,
+        includeInteractive: requestedRole === "auditor",
+        enforceCurrentPolicy: true,
+      },
+    );
+    response.json({ ...member, joinedAt: member.joinedAt.toISOString() });
+  },
+);
+
+router.delete(
+  "/organizations/:organizationId/members/:memberId",
+  requireRoles("owner", "admin"),
+  async (request, response) => {
+    if (!pathOrganizationMatches(request, response)) return;
+    const targetUserId = cleanText(request.params.memberId, 128);
+    const existing = await pool.query<{ role: OrganizationRole }>(
+      `SELECT role FROM agon_organization_memberships
+       WHERE organization_id = $1 AND user_id = $2`,
+      [ownerId(response), targetUserId],
+    );
+    const target = existing.rows[0];
+    if (!target || target.role === "owner") {
+      response.status(404).json({ error: "This member cannot be removed." });
+      return;
+    }
+    if (currentRole(response) === "admin" && target.role === "admin") {
+      response.status(403).json({ error: "Only an owner can remove an administrator." });
+      return;
+    }
+    await pool.query(
+      `DELETE FROM agon_organization_memberships
+       WHERE organization_id = $1 AND user_id = $2`,
+      [ownerId(response), targetUserId],
+    );
+    await addAudit(ownerId(response), "organization.member.removed", {
+      userId: targetUserId,
+      previousRole: target.role,
+    }, "warning", userId(response));
+    await closeOrganizationSessions(
+      ownerId(response),
+      "member_removed",
+      userId(response),
+      { createdBy: targetUserId, includeInteractive: true },
+    );
+    response.status(204).end();
+  },
+);
+
+router.get("/organizations/:organizationId/invitations", async (request, response) => {
+  if (!pathOrganizationMatches(request, response)) return;
+  response.setHeader("Cache-Control", "no-store");
+  response.json({ invitations: await listOrganizationInvitations(ownerId(response)) });
+});
+
+router.post(
+  "/organizations/:organizationId/invitations",
+  requireRoles("owner", "admin"),
+  async (request, response) => {
+    if (!pathOrganizationMatches(request, response)) return;
+    const role = cleanText(request.body?.role, 24);
+    if (!["admin", "technician", "auditor"].includes(role)) {
+      response.status(400).json({ error: "Select a valid invitation role." });
+      return;
+    }
+    if (currentRole(response) === "admin" && role === "admin") {
+      response.status(403).json({ error: "Only an owner can invite administrators." });
+      return;
+    }
+    const created = await createOrganizationInvitation(
+      ownerId(response),
+      userId(response),
+      role as Exclude<OrganizationRole, "owner">,
+    );
+    await addAudit(ownerId(response), "organization.invitation.created", {
+      invitationId: created.invitation.id,
+      role,
+    }, "info", userId(response));
+    response.status(201).json(created);
+  },
+);
+
+router.delete(
+  "/organizations/:organizationId/invitations/:invitationId",
+  requireRoles("owner", "admin"),
+  async (request, response) => {
+    if (!pathOrganizationMatches(request, response)) return;
+    const invitationId = cleanText(request.params.invitationId, 80);
+    const result = await pool.query(
+      `UPDATE agon_organization_invitations SET revoked_at = NOW()
+       WHERE id = $1 AND organization_id = $2
+         AND accepted_at IS NULL AND revoked_at IS NULL`,
+      [invitationId, ownerId(response)],
+    );
+    if (!result.rowCount) {
+      response.status(404).json({ error: "Active invitation not found." });
+      return;
+    }
+    await addAudit(ownerId(response), "organization.invitation.revoked", {
+      invitationId,
+    }, "warning", userId(response));
+    response.status(204).end();
+  },
+);
+
+router.get("/organizations/:organizationId/policy", async (request, response) => {
+  if (!pathOrganizationMatches(request, response)) return;
+  response.setHeader("Cache-Control", "no-store");
+  response.json(await getOrganizationPolicy(ownerId(response)));
+});
+
+router.put(
+  "/organizations/:organizationId/policy",
+  requireRoles("owner", "admin"),
+  async (request, response) => {
+    if (!pathOrganizationMatches(request, response)) return;
+    const input = request.body ?? {};
+    const allowedRoles = input.allowedRoles;
+    const allowedGroups = input.allowedGroups;
+    const minutes = Number(input.maxSessionMinutes);
+    if (
+      typeof input.unattendedDesktopEnabled !== "boolean" ||
+      !Array.isArray(allowedRoles) ||
+      allowedRoles.length > 3 ||
+      allowedRoles.some((role: unknown) => typeof role !== "string" || !unattendedRoles.has(role as OrganizationRole)) ||
+      new Set(allowedRoles).size !== allowedRoles.length ||
+      !Array.isArray(allowedGroups) ||
+      allowedGroups.length > 100 ||
+      allowedGroups.some((group: unknown) => typeof group !== "string" || !group.trim() || group.length > 80) ||
+      new Set(allowedGroups).size !== allowedGroups.length ||
+      !maxUnattendedSessionMinutes.has(minutes)
+    ) {
+      response.status(400).json({ error: "The organization access policy is invalid." });
+      return;
+    }
+    const devices = await listRecords(ownerId(response), "device", 1000);
+    const knownGroups = new Set(devices.map(({ data }) => cleanText(data.group, 80, "Unassigned") || "Unassigned"));
+    const groups = allowedGroups.map((group: string) => group.trim());
+    if (groups.some((group: string) => !knownGroups.has(group))) {
+      response.status(400).json({ error: "Policy groups must match a device group in this organization." });
+      return;
+    }
+    if (input.unattendedDesktopEnabled && (!groups.length || !allowedRoles.length)) {
+      response.status(400).json({ error: "Choose at least one allowed role and device group before enabling unattended access." });
+      return;
+    }
+    const updatedAt = new Date().toISOString();
+    await pool.query(
+      `UPDATE agon_organization_policies
+       SET unattended_desktop_enabled = $1,
+           allowed_roles = $2::jsonb,
+           allowed_groups = $3::jsonb,
+           max_session_minutes = $4,
+           updated_by = $5,
+           updated_at = $6
+       WHERE organization_id = $7`,
+      [
+        input.unattendedDesktopEnabled,
+        JSON.stringify(allowedRoles),
+        JSON.stringify(groups),
+        minutes,
+        userId(response),
+        updatedAt,
+        ownerId(response),
+      ],
+    );
+    await addAudit(ownerId(response), "organization.unattended_policy.updated", {
+      unattendedDesktopEnabled: input.unattendedDesktopEnabled,
+      allowedRoles,
+      allowedGroups: groups,
+      maxSessionMinutes: minutes,
+    }, "warning", userId(response));
+    await closeOrganizationSessions(
+      ownerId(response),
+      "organization_policy_changed",
+      userId(response),
+      { enforceCurrentPolicy: true, endUnattended: true },
+    );
+    response.json(await getOrganizationPolicy(ownerId(response)));
+  },
+);
+
 router.get("/pending-devices", async (_request, response) => {
   const pending = await listRecords(ownerId(response), "pending_device", 100);
   response.setHeader("Cache-Control", "no-store");
@@ -217,12 +773,13 @@ router.get("/pending-devices", async (_request, response) => {
         os: data.os,
         arch: data.arch,
         agent: data.agent,
+        allowUnattended: data.allowUnattended === true,
         requestedAt: data.requestedAt ?? createdAt.toISOString(),
       })),
   }));
 });
 
-router.post("/pending-devices/:deviceId/approve", async (request, response) => {
+router.post("/pending-devices/:deviceId/approve", requireRoles("owner", "admin"), async (request, response) => {
   const owner = ownerId(response);
   const parsedParams = ApproveAgonPendingDeviceParams.safeParse(request.params);
   const parsedBody = ApproveAgonPendingDeviceBody.safeParse(request.body);
@@ -283,11 +840,11 @@ router.post("/pending-devices/:deviceId/approve", async (request, response) => {
   }
 
   disconnectAgonDevice(deviceId);
-  await addAudit(owner, "device.pairing.approved", { deviceId, name: approvedName }, "success");
+  await addAudit(owner, "device.pairing.approved", { deviceId, name: approvedName }, "success", userId(response));
   response.json(ApproveAgonPendingDeviceResponse.parse({ deviceId, status: "approved" }));
 });
 
-router.delete("/pending-devices/:deviceId", async (request, response) => {
+router.delete("/pending-devices/:deviceId", requireRoles("owner", "admin"), async (request, response) => {
   const owner = ownerId(response);
   const parsedParams = IgnoreAgonPendingDeviceParams.safeParse(request.params);
   if (!parsedParams.success) {
@@ -312,7 +869,7 @@ router.delete("/pending-devices/:deviceId", async (request, response) => {
   await addAudit(owner, "device.pairing.rejected", {
     deviceId,
     name: rejected.data.name,
-  }, "warning");
+  }, "warning", userId(response));
   response.status(204).end();
 });
 
@@ -327,7 +884,33 @@ router.get("/devices", async (_request, response) => {
   });
 });
 
-router.delete("/devices/:deviceId", async (request, response) => {
+router.get("/devices/:deviceId/access-policy", async (request, response) => {
+  const deviceId = cleanText(request.params.deviceId, 80);
+  const device = await getRecord(ownerId(response), "device", deviceId);
+  if (!device) {
+    response.status(404).json({ error: "Device not found in this organization." });
+    return;
+  }
+  const access = await checkUnattendedAccess(ownerId(response), currentRole(response), device);
+  const interactiveAllowed = currentRole(response) !== "auditor";
+  await addAudit(ownerId(response), "access.policy.checked", {
+    deviceId,
+    interactiveAllowed,
+    unattendedAllowed: access.allowed,
+    role: currentRole(response),
+    group: cleanText(device.data.group, 80, "Unassigned") || "Unassigned",
+  }, "info", userId(response));
+  response.setHeader("Cache-Control", "no-store");
+  response.json({
+    deviceId,
+    interactiveAllowed,
+    unattendedAllowed: access.allowed,
+    unattendedReason: access.reason,
+    endpointOptIn: device.data.allowUnattended === true,
+  });
+});
+
+router.delete("/devices/:deviceId", requireRoles("owner", "admin"), async (request, response) => {
   const owner = ownerId(response);
   const result = await pool.query(
     `DELETE FROM agon_records
@@ -342,7 +925,7 @@ router.delete("/devices/:deviceId", async (request, response) => {
   disconnectAgonDevice(request.params.deviceId);
   await addAudit(owner, "device.access.revoked", {
     deviceId: request.params.deviceId,
-  });
+  }, "warning", userId(response));
   response.status(204).end();
 });
 
@@ -368,7 +951,7 @@ router.get("/audit", async (request, response) => {
   response.json({ events: events.map(({ id, data }) => ({ ...data, id })) });
 });
 
-router.post("/devices/:deviceId/commands", async (request, response) => {
+router.post("/devices/:deviceId/commands", requireRoles("owner", "admin", "technician"), async (request, response) => {
   const action = cleanText(request.body?.action, 80);
   if (!allowedActions.has(action)) {
     response.status(400).json({ error: "Requested action is not allowlisted." });
@@ -396,7 +979,18 @@ router.post("/sessions", async (request, response) => {
   const customer = cleanText(request.body?.customer, 120);
   const issue = cleanText(request.body?.issue, 2000);
   const deviceId = cleanText(request.body?.deviceId, 80);
-  const mode = "interactive";
+  const mode = request.body?.mode === "unattended" ? "unattended" : "interactive";
+  const role = currentRole(response);
+  if (role === "auditor") {
+    if (mode === "unattended") {
+      await addAudit(owner, "session.unattended.denied", {
+        deviceId: deviceId || null,
+        reason: "auditor_role",
+      }, "warning", userId(response));
+    }
+    response.status(403).json({ error: "Auditor access is read-only and cannot start support sessions." });
+    return;
+  }
   if (!customer || !issue) {
     response.status(400).json({ error: "Customer and issue are required." });
     return;
@@ -405,6 +999,17 @@ router.post("/sessions", async (request, response) => {
   if (deviceId && !device) {
     response.status(404).json({ error: "Device not found in this account." });
     return;
+  }
+  if (mode === "unattended") {
+    const access = await checkUnattendedAccess(owner, role, device);
+    if (!access.allowed) {
+      await addAudit(owner, "session.unattended.denied", {
+        deviceId: device?.id ?? null,
+        reason: access.reason,
+      }, "warning", userId(response));
+      response.status(403).json({ error: access.reason });
+      return;
+    }
   }
 
   const id = randomUUID();
@@ -417,7 +1022,8 @@ router.post("/sessions", async (request, response) => {
     deviceName: String(device?.data.name ?? "Waiting for device"),
     mode,
     status: "waiting",
-    actor: "Operator",
+    actor: userId(response),
+    createdBy: userId(response),
     relayId: "agon-hosted",
     createdAt: new Date().toISOString(),
   };
@@ -427,12 +1033,14 @@ router.post("/sessions", async (request, response) => {
     deviceId: device?.id ?? null,
     deviceName: session.deviceName,
     code,
-  });
+    mode,
+  }, mode === "unattended" ? "warning" : "info", userId(response));
   response.status(201).json({ session: { ...session, id } });
 });
 
 router.post("/sessions/:sessionId/connect", async (request, response): Promise<void> => {
   const owner = ownerId(response);
+  const role = currentRole(response);
   const sessionId = cleanText(request.params.sessionId, 80);
   const session = await getRecord(owner, "session", sessionId);
   if (!session) {
@@ -443,9 +1051,32 @@ router.post("/sessions/:sessionId/connect", async (request, response): Promise<v
     response.status(409).json({ error: "This support session is already closed." });
     return;
   }
+  if (role === "auditor") {
+    if (session.data.mode === "unattended") {
+      await addAudit(owner, "session.unattended.denied", {
+        sessionId: session.id,
+        reason: "auditor_role",
+      }, "warning", userId(response));
+    }
+    response.status(403).json({ error: "Auditor access is read-only and cannot connect to support sessions." });
+    return;
+  }
+  if (
+    role === "technician" &&
+    typeof session.data.createdBy === "string" &&
+    session.data.createdBy !== userId(response)
+  ) {
+    response.status(403).json({ error: "Technicians can connect only to sessions they requested." });
+    return;
+  }
   const deviceId = typeof session.data.deviceId === "string" ? session.data.deviceId : "";
   if (!deviceId) {
     response.status(409).json({ error: "Choose a managed endpoint before connecting." });
+    return;
+  }
+  const device = await getRecord(owner, "device", deviceId);
+  if (!device) {
+    response.status(404).json({ error: "The endpoint is no longer managed by this organization." });
     return;
   }
   if (!isAgonCompanionConnected(deviceId)) {
@@ -460,17 +1091,35 @@ router.post("/sessions/:sessionId/connect", async (request, response): Promise<v
     });
     return;
   }
+  let unattendedPolicy: OrganizationPolicy | null = null;
+  if (session.data.mode === "unattended") {
+    const access = await checkUnattendedAccess(owner, role, device);
+    if (!access.allowed) {
+      await addAudit(owner, "session.unattended.denied", {
+        sessionId: session.id,
+        deviceId,
+        reason: access.reason,
+      }, "warning", userId(response));
+      response.status(403).json({ error: access.reason });
+      return;
+    }
+    unattendedPolicy = access.policy;
+  }
   endAgonDesktopSession(session.id, deviceId);
 
   const token = randomBytes(32).toString("base64url");
   const consentRequestId = randomUUID();
-  const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+  const maxSessionMinutes = unattendedPolicy?.maxSessionMinutes ?? 30;
+  const expiresAt = new Date(Date.now() + maxSessionMinutes * 60 * 1000).toISOString();
   const updatedSession = {
     ...session.data,
     status: "waiting",
     consentRequestId,
     viewerTokenHash: hashToken(token),
     viewerTokenExpiresAt: expiresAt,
+    expiresAt,
+    maxSessionMinutes,
+    connectedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
   await pool.query(
@@ -485,7 +1134,9 @@ router.post("/sessions/:sessionId/connect", async (request, response): Promise<v
     code: String(session.data.code ?? ""),
     customer: String(session.data.customer ?? ""),
     issue: String(session.data.issue ?? ""),
-    technician: String(session.data.actor ?? "Operator"),
+    technician: userId(response),
+    mode: session.data.mode === "unattended" ? "unattended" : "interactive",
+    expiresAt,
   });
   if (!job) {
     response.status(502).json({ error: "Could not send the consent request to the desktop companion." });
@@ -495,7 +1146,18 @@ router.post("/sessions/:sessionId/connect", async (request, response): Promise<v
     sessionId: session.id,
     deviceId,
     code: session.data.code,
-  });
+    mode: session.data.mode === "unattended" ? "unattended" : "interactive",
+    expiresAt,
+  }, session.data.mode === "unattended" ? "warning" : "info", userId(response));
+  if (session.data.mode === "unattended") {
+    await addAudit(owner, "session.unattended.authorized", {
+      sessionId: session.id,
+      deviceId,
+      role,
+      group: cleanText(device?.data.group, 80, "Unassigned") || "Unassigned",
+      maxSessionMinutes,
+    }, "warning", userId(response));
+  }
   response.setHeader("Cache-Control", "no-store");
   response.json({
     sessionId: session.id,
@@ -510,6 +1172,13 @@ router.post("/sessions/:sessionId/end", async (request, response): Promise<void>
   const session = await getRecord(owner, "session", sessionId);
   if (!session) {
     response.status(404).json({ error: "Support session not found." });
+    return;
+  }
+  if (
+    !["owner", "admin"].includes(currentRole(response)) &&
+    session.data.createdBy !== userId(response)
+  ) {
+    response.status(403).json({ error: "Only the session requester or an organization administrator can end this session." });
     return;
   }
   const deviceId = typeof session.data.deviceId === "string" ? session.data.deviceId : "";
@@ -532,8 +1201,60 @@ router.post("/sessions/:sessionId/end", async (request, response): Promise<void>
     sessionId: session.id,
     deviceId: deviceId || null,
     code: session.data.code,
-  });
+  }, "info", userId(response));
   response.json({ session: { ...withoutViewerCredentials(session.data), status: "ended", endedAt } });
 });
+
+async function expireOverdueUnattendedSessions(): Promise<void> {
+  const overdue = await pool.query<{ id: string; owner_id: string }>(
+    `SELECT id, owner_id
+     FROM agon_records
+     WHERE kind = 'session'
+       AND data->>'mode' = 'unattended'
+       AND data->>'status' IN ('waiting', 'consent_required', 'accepted', 'active', 'disconnected')
+       AND NULLIF(data->>'expiresAt', '') IS NOT NULL
+       AND (data->>'expiresAt')::timestamptz <= NOW()
+     ORDER BY updated_at ASC
+     LIMIT 100`,
+  );
+  for (const candidate of overdue.rows) {
+    const now = new Date().toISOString();
+    const expired = await pool.query<{ data: Record<string, unknown> }>(
+      `UPDATE agon_records
+       SET data = data || jsonb_build_object(
+             'status', 'expired',
+             'consentRequestId', NULL,
+             'viewerTokenHash', NULL,
+             'viewerTokenExpiresAt', NULL,
+             'endedAt', $1,
+             'updatedAt', $1
+           ),
+           updated_at = NOW()
+       WHERE id = $2 AND owner_id = $3 AND kind = 'session'
+         AND data->>'mode' = 'unattended'
+         AND data->>'status' IN ('waiting', 'consent_required', 'accepted', 'active', 'disconnected')
+         AND NULLIF(data->>'expiresAt', '') IS NOT NULL
+         AND (data->>'expiresAt')::timestamptz <= NOW()
+       RETURNING data`,
+      [now, candidate.id, candidate.owner_id],
+    );
+    const data = expired.rows[0]?.data;
+    if (!data) continue;
+    const deviceId = typeof data.deviceId === "string" ? data.deviceId : "";
+    if (deviceId) endAgonDesktopSession(candidate.id, deviceId);
+    await addAudit(candidate.owner_id, "session.unattended.expired", {
+      sessionId: candidate.id,
+      deviceId: deviceId || null,
+      maxSessionMinutes: data.maxSessionMinutes ?? null,
+    }, "warning", "organization-policy");
+  }
+}
+
+const unattendedExpirySweep = setInterval(() => {
+  void expireOverdueUnattendedSessions().catch((error) => {
+    console.error("Agon unattended-session expiry sweep failed:", error);
+  });
+}, 15_000);
+unattendedExpirySweep.unref?.();
 
 export default router;
