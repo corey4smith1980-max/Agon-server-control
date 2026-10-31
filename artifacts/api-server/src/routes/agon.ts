@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
 import { Router, type RequestHandler } from "express";
 import { getAuth } from "@clerk/express";
 import {
@@ -11,6 +12,7 @@ import {
   ListPendingAgonDevicesResponse,
 } from "@workspace/api-zod";
 import { pool } from "@workspace/db";
+import { buildWindowsMsi } from "../lib/agentMsiBuilder";
 import { addAudit, createRecord, getRecord, getRecordById, listRecords } from "../lib/agonStore";
 import {
   acceptOrganizationInvitation,
@@ -110,6 +112,19 @@ function pathOrganizationMatches(
 function cleanText(value: unknown, limit: number, fallback = ""): string {
   if (typeof value !== "string") return fallback;
   return value.trim().replace(/\0/g, "").slice(0, limit);
+}
+
+function cleanByteCount(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : 0;
+}
+
+function cleanIpAddresses(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((address): address is string => typeof address === "string" && isIP(address) !== 0)
+    .slice(0, 12);
 }
 
 function withoutViewerCredentials(data: Record<string, unknown>): Record<string, unknown> {
@@ -421,10 +436,17 @@ router.post("/api/pair-requests", async (request, response) => {
     hostname,
     group: cleanText(deviceInfo.group, 80, "Unassigned"),
     os: cleanText(deviceInfo.os, 100),
+    osVersion: cleanText(deviceInfo.osVersion, 120),
     arch: cleanText(deviceInfo.arch, 40),
     agent: cleanText(deviceInfo.agent, 40, "1.0.0"),
     cpus: Number.isFinite(deviceInfo.cpus) ? deviceInfo.cpus : 0,
+    cpuModel: cleanText(deviceInfo.cpuModel, 180),
     interfaces: Number.isFinite(deviceInfo.interfaces) ? deviceInfo.interfaces : 0,
+    ipAddresses: cleanIpAddresses(deviceInfo.ipAddresses),
+    memoryTotalBytes: cleanByteCount(deviceInfo.memoryTotalBytes),
+    memoryUsedBytes: cleanByteCount(deviceInfo.memoryUsedBytes),
+    diskTotalBytes: cleanByteCount(deviceInfo.diskTotalBytes),
+    diskUsedBytes: cleanByteCount(deviceInfo.diskUsedBytes),
     tokenHash,
     pairingCodeHash,
     relayId: "agon-hosted",
@@ -494,6 +516,45 @@ router.post("/organizations/invitations/accept", async (request, response) => {
 });
 
 router.use(resolveOrganization);
+
+router.post(
+  "/agent-installer/msi",
+  requireRoles("owner", "admin", "technician"),
+  async (request, response) => {
+    const architecture = cleanText(request.body?.architecture, 16);
+    const group = cleanText(request.body?.group, 80, "Unassigned") || "Unassigned";
+    const allowUnattended = request.body?.allowUnattended === true;
+    if (architecture !== "amd64") {
+      response.status(400).json({ error: "Windows MSI generation currently supports x64. Use the Windows ARM64 package for ARM devices." });
+      return;
+    }
+    if (allowUnattended && currentRole(response) !== "owner" && currentRole(response) !== "admin") {
+      response.status(403).json({ error: "Only organization owners or administrators can opt an installer into unattended access." });
+      return;
+    }
+    const packageFile = await buildWindowsMsi({
+      architecture,
+      organizationId: ownerId(response),
+      group,
+      allowUnattended,
+    });
+    response.setHeader("Cache-Control", "no-store");
+    response.setHeader("Content-Type", "application/x-msi");
+    response.setHeader("Content-Length", packageFile.buffer.byteLength);
+    response.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${packageFile.filename}"`,
+    );
+    await addAudit(ownerId(response), "installer.generated", {
+      filename: packageFile.filename,
+      architecture,
+      group,
+      access: allowUnattended ? "unattended-opt-in" : "interactive",
+      agentSha256: packageFile.agentSha256,
+    }, "success", userId(response));
+    response.status(200).send(packageFile.buffer);
+  },
+);
 
 router.patch("/organizations/:organizationId", requireRoles("owner", "admin"), async (request, response) => {
   if (!pathOrganizationMatches(request, response)) return;
@@ -916,15 +977,15 @@ router.delete("/devices/:deviceId", requireRoles("owner", "admin"), async (reque
     `DELETE FROM agon_records
      WHERE id = $1 AND owner_id = $2 AND kind = 'device'
      RETURNING id`,
-    [request.params.deviceId, owner],
+    [cleanText(request.params.deviceId, 80), owner],
   );
   if (!result.rowCount) {
     response.status(404).json({ error: "Device not found in this account." });
     return;
   }
-  disconnectAgonDevice(request.params.deviceId);
+  disconnectAgonDevice(cleanText(request.params.deviceId, 80));
   await addAudit(owner, "device.access.revoked", {
-    deviceId: request.params.deviceId,
+    deviceId: cleanText(request.params.deviceId, 80),
   }, "warning", userId(response));
   response.status(204).end();
 });
@@ -963,7 +1024,7 @@ router.post("/devices/:deviceId/commands", requireRoles("owner", "admin", "techn
       : {};
   const job = await queueAgonCommand(
     ownerId(response),
-    request.params.deviceId,
+    cleanText(request.params.deviceId, 80),
     action,
     payload,
   );

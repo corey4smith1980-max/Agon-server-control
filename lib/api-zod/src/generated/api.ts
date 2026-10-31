@@ -41,13 +41,29 @@ export const createAgonPairRequestBodyDeviceGroupMax = 80;
 
 export const createAgonPairRequestBodyDeviceOsMax = 100;
 
+export const createAgonPairRequestBodyDeviceOsVersionMax = 120;
+
 export const createAgonPairRequestBodyDeviceArchMax = 40;
 
 export const createAgonPairRequestBodyDeviceAgentMax = 40;
 
 export const createAgonPairRequestBodyDeviceCpusMin = 0;
 
+export const createAgonPairRequestBodyDeviceCpuModelMax = 180;
+
 export const createAgonPairRequestBodyDeviceInterfacesMin = 0;
+
+export const createAgonPairRequestBodyDeviceIpAddressesItemMax = 64;
+
+export const createAgonPairRequestBodyDeviceIpAddressesMax = 12;
+
+export const createAgonPairRequestBodyDeviceMemoryTotalBytesMin = 0;
+
+export const createAgonPairRequestBodyDeviceMemoryUsedBytesMin = 0;
+
+export const createAgonPairRequestBodyDeviceDiskTotalBytesMin = 0;
+
+export const createAgonPairRequestBodyDeviceDiskUsedBytesMin = 0;
 
 
 
@@ -62,10 +78,17 @@ export const CreateAgonPairRequestBody = zod.object({
   "name": zod.string().max(createAgonPairRequestBodyDeviceNameMax),
   "group": zod.string().max(createAgonPairRequestBodyDeviceGroupMax),
   "os": zod.string().max(createAgonPairRequestBodyDeviceOsMax),
+  "osVersion": zod.string().max(createAgonPairRequestBodyDeviceOsVersionMax).optional(),
   "arch": zod.string().max(createAgonPairRequestBodyDeviceArchMax),
   "agent": zod.string().max(createAgonPairRequestBodyDeviceAgentMax),
   "cpus": zod.number().int().min(createAgonPairRequestBodyDeviceCpusMin),
+  "cpuModel": zod.string().max(createAgonPairRequestBodyDeviceCpuModelMax).optional(),
   "interfaces": zod.number().int().min(createAgonPairRequestBodyDeviceInterfacesMin),
+  "ipAddresses": zod.array(zod.string().max(createAgonPairRequestBodyDeviceIpAddressesItemMax)).max(createAgonPairRequestBodyDeviceIpAddressesMax).optional(),
+  "memoryTotalBytes": zod.number().int().min(createAgonPairRequestBodyDeviceMemoryTotalBytesMin).optional(),
+  "memoryUsedBytes": zod.number().int().min(createAgonPairRequestBodyDeviceMemoryUsedBytesMin).optional(),
+  "diskTotalBytes": zod.number().int().min(createAgonPairRequestBodyDeviceDiskTotalBytesMin).optional(),
+  "diskUsedBytes": zod.number().int().min(createAgonPairRequestBodyDeviceDiskUsedBytesMin).optional(),
   "bootId": zod.string().optional()
 })
 })
@@ -73,6 +96,22 @@ export const CreateAgonPairRequestBody = zod.object({
 export const CreateAgonPairRequestResponse = zod.object({
   "status": zod.enum(['pending', 'approved'])
 })
+
+
+/**
+ * @summary Build a configured Windows MSI for the active organization
+ */
+export const buildAgonWindowsMsiBodyGroupMax = 80;
+
+
+
+export const BuildAgonWindowsMsiBody = zod.object({
+  "architecture": zod.enum(['amd64']),
+  "group": zod.string().min(1).max(buildAgonWindowsMsiBodyGroupMax),
+  "allowUnattended": zod.boolean()
+})
+
+export const BuildAgonWindowsMsiResponse = zod.unknown()
 
 
 /**

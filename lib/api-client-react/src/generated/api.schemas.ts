@@ -18,14 +18,31 @@ export interface AgonDeviceInfo {
   group: string;
   /** @maxLength 100 */
   os: string;
+  /** @maxLength 120 */
+  osVersion?: string;
   /** @maxLength 40 */
   arch: string;
   /** @maxLength 40 */
   agent: string;
   /** @minimum 0 */
   cpus: number;
+  /** @maxLength 180 */
+  cpuModel?: string;
   /** @minimum 0 */
   interfaces: number;
+  /**
+     * @maxItems 12
+     * @items.maxLength 64
+     */
+  ipAddresses?: string[];
+  /** @minimum 0 */
+  memoryTotalBytes?: number;
+  /** @minimum 0 */
+  memoryUsedBytes?: number;
+  /** @minimum 0 */
+  diskTotalBytes?: number;
+  /** @minimum 0 */
+  diskUsedBytes?: number;
   bootId?: string;
 }
 
@@ -49,6 +66,23 @@ export interface AgonPairRequestInput {
   pairingCode: string;
   allowUnattended?: boolean;
   device: AgonDeviceInfo;
+}
+
+export type AgonWindowsMsiInputArchitecture = typeof AgonWindowsMsiInputArchitecture[keyof typeof AgonWindowsMsiInputArchitecture];
+
+
+export const AgonWindowsMsiInputArchitecture = {
+  amd64: 'amd64',
+} as const;
+
+export interface AgonWindowsMsiInput {
+  architecture: AgonWindowsMsiInputArchitecture;
+  /**
+     * @minLength 1
+     * @maxLength 80
+     */
+  group: string;
+  allowUnattended: boolean;
 }
 
 export type AgonPairStateStatus = typeof AgonPairStateStatus[keyof typeof AgonPairStateStatus];

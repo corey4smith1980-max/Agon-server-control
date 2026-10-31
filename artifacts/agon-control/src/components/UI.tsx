@@ -50,8 +50,8 @@ export function Progress({ value, tone = 'lime', className }: { value: number; t
   return <div className={cn('h-1.5 overflow-hidden rounded-full bg-white/[0.07]', className)}><motion.div className={cn('h-full rounded-full', color)} initial={{ width: 0 }} animate={{ width: `${Math.min(100, Math.max(0, value))}%` }} transition={{ duration: 0.55, ease: 'easeOut' }} /></div>
 }
 
-export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (checked: boolean) => void; label: string }) {
-  return <button type="button" role="switch" aria-checked={checked} aria-label={label} onClick={() => onChange(!checked)} className={cn('relative h-6 w-11 shrink-0 rounded-full border transition-colors duration-200', checked ? 'border-lime-300/40 bg-lime-300' : 'border-white/10 bg-white/[0.08]')}>
+export function Toggle({ checked, onChange, label, disabled = false }: { checked: boolean; onChange: (checked: boolean) => void; label: string; disabled?: boolean }) {
+  return <button type="button" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} onClick={() => onChange(!checked)} className={cn('relative h-6 w-11 shrink-0 rounded-full border transition-colors duration-200', checked ? 'border-lime-300/40 bg-lime-300' : 'border-white/10 bg-white/[0.08]', disabled && 'cursor-not-allowed opacity-45')}>
     <motion.span className="absolute left-0.5 top-0.5 h-[18px] w-[18px] rounded-full bg-white shadow-sm" animate={{ x: checked ? 20 : 0 }} transition={{ type: 'spring', stiffness: 500, damping: 32 }} />
   </button>
 }

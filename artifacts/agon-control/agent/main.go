@@ -29,7 +29,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const agentVersion = "1.0.2"
+const agentVersion = "1.0.3"
 
 type Config struct {
 	ServerURL        string `json:"serverUrl"`
@@ -44,16 +44,23 @@ type Config struct {
 }
 
 type DeviceInfo struct {
-	DeviceID   string `json:"deviceId,omitempty"`
-	Hostname   string `json:"hostname"`
-	Name       string `json:"name"`
-	Group      string `json:"group"`
-	OS         string `json:"os"`
-	Arch       string `json:"arch"`
-	Agent      string `json:"agent"`
-	CPUs       int    `json:"cpus"`
-	Interfaces int    `json:"interfaces"`
-	BootID     string `json:"bootId"`
+	DeviceID         string   `json:"deviceId,omitempty"`
+	Hostname         string   `json:"hostname"`
+	Name             string   `json:"name"`
+	Group            string   `json:"group"`
+	OS               string   `json:"os"`
+	OSVersion        string   `json:"osVersion,omitempty"`
+	Arch             string   `json:"arch"`
+	Agent            string   `json:"agent"`
+	CPUs             int      `json:"cpus"`
+	CPUModel         string   `json:"cpuModel,omitempty"`
+	Interfaces       int      `json:"interfaces"`
+	IPAddresses      []string `json:"ipAddresses,omitempty"`
+	MemoryTotalBytes uint64   `json:"memoryTotalBytes,omitempty"`
+	MemoryUsedBytes  uint64   `json:"memoryUsedBytes,omitempty"`
+	DiskTotalBytes   uint64   `json:"diskTotalBytes,omitempty"`
+	DiskUsedBytes    uint64   `json:"diskUsedBytes,omitempty"`
+	BootID           string   `json:"bootId"`
 }
 
 type DesktopInput struct {
@@ -159,9 +166,25 @@ func main() {
 
 	if *companion {
 		if cfg.DeviceID == "" || cfg.DeviceToken == "" {
-			log.Fatal("desktop companion requires an installed device identity; run install.ps1 first")
+			fmt.Println("Agon Desktop Companion is waiting for the installed service to create this device identity.")
+			for attempt := 0; attempt < 30; attempt++ {
+				time.Sleep(time.Second)
+				latest, loadErr := loadConfig(*configPath)
+				if loadErr == nil {
+					cfg = latest
+				}
+				if cfg.DeviceID != "" && cfg.DeviceToken != "" {
+					break
+				}
+			}
+			if cfg.DeviceID == "" || cfg.DeviceToken == "" {
+				log.Fatal("device identity is not available; confirm that the AgonAgent service is installed and running")
+			}
 		}
 		log.Printf("Agon visible desktop companion starting for %s; close this window to disconnect", cfg.DeviceName)
+		if cfg.PairingCode != "" {
+			fmt.Printf("Pairing code: %s\nApprove this device in the Agon Control deployment page.\n", formatPairingCode(cfg.PairingCode))
+		}
 		if err := runAgentChannel(context.Background(), cfg, *configPath, "companion"); err != nil {
 			log.Fatal(err)
 		}
@@ -217,10 +240,15 @@ func saveConfig(path string, cfg Config) error {
 func currentDeviceInfo(cfg Config) DeviceInfo {
 	hostname, _ := os.Hostname()
 	interfaces, _ := net.Interfaces()
+	inventory := collectDeviceInventory()
 	return DeviceInfo{
 		DeviceID: cfg.DeviceID, Hostname: hostname, Name: cfg.DeviceName, Group: cfg.Group,
-		OS: runtime.GOOS, Arch: runtime.GOARCH, Agent: agentVersion, CPUs: runtime.NumCPU(),
-		Interfaces: len(interfaces), BootID: fmt.Sprintf("%d", time.Now().Unix()),
+		OS: runtime.GOOS, OSVersion: inventory.OSVersion, Arch: runtime.GOARCH,
+		Agent: agentVersion, CPUs: runtime.NumCPU(), CPUModel: inventory.CPUModel,
+		Interfaces: len(interfaces), IPAddresses: inventory.IPAddresses,
+		MemoryTotalBytes: inventory.MemoryTotalBytes, MemoryUsedBytes: inventory.MemoryUsedBytes,
+		DiskTotalBytes: inventory.DiskTotalBytes, DiskUsedBytes: inventory.DiskUsedBytes,
+		BootID: fmt.Sprintf("%d", time.Now().Unix()),
 	}
 }
 

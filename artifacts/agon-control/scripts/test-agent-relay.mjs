@@ -147,20 +147,34 @@ try {
 
   const installerSource = await readFile(deploymentSource, 'utf8');
   const utilsSource = await readFile(utilsSourcePath, 'utf8');
+  const msiBuilderSource = await readFile(
+    path.resolve(projectRoot, '../api-server/src/lib/agentMsiBuilder.ts'),
+    'utf8',
+  );
   assert(utilsSource.includes("https://agon-server-control.replit.app/deployment/api/agon"), 'Agent package must target the published deployment-prefixed API base URL.');
   assert(installerSource.includes('const serverUrl = HOSTED_CONTROL_PLANE_URL'), 'Installer must use the published API base URL.');
   for (const required of [
     '#Requires -RunAsAdministrator',
-    '$agentExitCode = $LASTEXITCODE',
-    'if ($agentExitCode -ne 0)',
+    '$installExitCode = $LASTEXITCODE',
+    'if ($installExitCode -ne 0)',
     'Get-Service -Name "AgonAgent"',
     'Start-Service -Name "AgonAgent"',
-    'Agon Desktop Companion',
-    'visible Agon Desktop Companion window',
+    'install.ps1',
+    'requestControlPlane(\'/api/agon/agent-installer/msi\'',
   ]) {
     assert(installerSource.includes(required), `Windows installer is missing required check: ${required}`);
   }
-  console.log('PASS: Windows x64 executable, published API target, and installer safety checks.');
+  for (const required of [
+    'ServiceInstall',
+    'ServiceControl',
+    'Agon Desktop Companion',
+    'ProgramFiles64Folder',
+    'allowUnattended',
+    'https://agon-server-control.replit.app/deployment/api/agon',
+  ]) {
+    assert(msiBuilderSource.includes(required), `Windows MSI builder is missing required feature: ${required}`);
+  }
+  console.log('PASS: Windows x64 MSI builder, ARM64 package, published API target, and install safety checks.');
 
   const wsEntry = path.join(relayRoot, 'node_modules', 'ws', 'package.json');
   try {

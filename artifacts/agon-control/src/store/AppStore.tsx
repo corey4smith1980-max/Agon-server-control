@@ -350,8 +350,8 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
         const results: Record<string, string> = {}
         for (const device of selected) {
           if (device.status === 'offline') results[device.name] = 'Device offline · job will remain queued until the next agent connection'
-          else if (action === 'agent.ping') results[device.name] = `pong · agent ${device.agentVersion} · ${device.relay} · ${Math.max(8, Math.round(device.cpu / 2 + 17))} ms`
-          else if (action === 'inventory.refresh') results[device.name] = `${device.os} · ${device.arch} · ${device.memory}% memory · ${device.disk}% disk`
+          else if (action === 'agent.ping') results[device.name] = `pong · agent ${device.agentVersion} · ${device.relay} · ${Math.max(8, Math.round((device.cpu ?? 0) / 2 + 17))} ms`
+          else if (action === 'inventory.refresh') results[device.name] = `${device.os} · ${device.arch} · ${device.memory === null ? 'memory not reported' : `${device.memory}% memory`} · ${device.disk === null ? 'disk not reported' : `${device.disk}% disk`}`
           else if (action === 'diagnostics.network') results[device.name] = `${device.ip} · relay ${device.relay} reachable · outbound WebSocket path healthy`
           else results[device.name] = device.access === 'unattended' ? 'Accepted by installed unattended endpoint policy' : 'Interactive approval required at the endpoint'
         }
@@ -485,12 +485,29 @@ export function AppStoreProvider({ children, userId }: { children: ReactNode; us
       setOrganizationMembers(Array.isArray(memberData.members) ? memberData.members : [])
       setOrganizationInvitations(Array.isArray(invitationData.invitations) ? invitationData.invitations : [])
       setOrganizationPolicy(policyData as OrganizationPolicy)
+      const toPercent = (used: unknown, total: unknown) => {
+        if (typeof used !== 'number' || typeof total !== 'number' || total <= 0) return null
+        return Math.max(0, Math.min(100, Math.round((used / total) * 100)))
+      }
       const realDevices: Device[] = (Array.isArray(deviceData.devices) ? deviceData.devices : []).map((device: Record<string, unknown>) => ({
         id: String(device.id), name: String(device.name || device.hostname), hostname: String(device.hostname || device.name),
         platform: platformFromOs(String(device.os)), os: String(device.os || 'Unknown'), arch: String(device.arch || 'unknown'),
-        group: String(device.group || 'Unassigned'), status: device.online ? 'online' : 'offline', ip: 'Reported by agent',
+        group: String(device.group || 'Unassigned'), status: device.online ? 'online' : 'offline',
+        ip: Array.isArray(device.ipAddresses) && device.ipAddresses.length
+          ? device.ipAddresses.map(String).join(', ')
+          : 'Not reported by agent',
         lastSeen: String(device.lastSeen || device.pairedAt || device.enrolledAt || new Date().toISOString()), agentVersion: String(device.agent || 'unknown'),
-        relay: String(device.relayId || 'relay'), cpu: 0, memory: 0, disk: 0, user: 'Managed endpoint', tags: ['paired'],
+        relay: String(device.relayId || 'Agon hosted'), cpu: null,
+        memory: toPercent(device.memoryUsedBytes, device.memoryTotalBytes),
+        disk: toPercent(device.diskUsedBytes, device.diskTotalBytes),
+        cpuCores: typeof device.cpus === 'number' ? device.cpus : undefined,
+        cpuModel: typeof device.cpuModel === 'string' ? device.cpuModel : undefined,
+        osVersion: typeof device.osVersion === 'string' ? device.osVersion : undefined,
+        memoryTotalBytes: typeof device.memoryTotalBytes === 'number' ? device.memoryTotalBytes : undefined,
+        memoryUsedBytes: typeof device.memoryUsedBytes === 'number' ? device.memoryUsedBytes : undefined,
+        diskTotalBytes: typeof device.diskTotalBytes === 'number' ? device.diskTotalBytes : undefined,
+        diskUsedBytes: typeof device.diskUsedBytes === 'number' ? device.diskUsedBytes : undefined,
+        user: 'Not reported by agent service', tags: ['paired'],
         access: device.allowUnattended === true ? 'unattended' : 'interactive',
         unattendedOptIn: device.allowUnattended === true,
         location: 'Not reported', sample: false,

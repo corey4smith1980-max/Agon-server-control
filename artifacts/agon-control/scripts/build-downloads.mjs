@@ -26,7 +26,7 @@ await Promise.all([
   mkdir(agentOutput, { recursive: true }),
   mkdir(publicAgentOutput, { recursive: true }),
 ]);
-const manifest = { version: '1.0.2', artifacts: [] };
+const manifest = { version: '1.0.3', artifacts: [] };
 
 for (const target of builds) {
   const filename = `agon-agent-${target.platform}-${target.arch}${target.extension}`;
@@ -109,6 +109,11 @@ const agentFiles = [
   'main_test.go',
   'go.mod',
   'go.sum',
+  'desktop_windows.go',
+  'desktop_unsupported.go',
+  'inventory_common.go',
+  'inventory_unix.go',
+  'inventory_windows.go',
   'service_android.go',
   'service_unix.go',
   'service_windows.go',

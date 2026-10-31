@@ -81,6 +81,37 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AgonError"
+  /agon/agent-installer/msi:
+    post:
+      operationId: buildAgonWindowsMsi
+      tags: [agon]
+      summary: Build a configured Windows MSI for the active organization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgonWindowsMsiInput"
+      responses:
+        "200":
+          description: Generated Windows installer
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Installer options are invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgonError"
+        "403":
+          description: The user's organization role does not allow this installer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgonError"
   /agon/pending-devices:
     get:
       operationId: listPendingAgonDevices
@@ -444,11 +475,30 @@ components:
         name: { type: string, maxLength: 100 }
         group: { type: string, maxLength: 80 }
         os: { type: string, maxLength: 100 }
+        osVersion: { type: string, maxLength: 120 }
         arch: { type: string, maxLength: 40 }
         agent: { type: string, maxLength: 40 }
         cpus: { type: integer, minimum: 0 }
+        cpuModel: { type: string, maxLength: 180 }
         interfaces: { type: integer, minimum: 0 }
+        ipAddresses:
+          type: array
+          maxItems: 12
+          items: { type: string, maxLength: 64 }
+        memoryTotalBytes: { type: integer, minimum: 0 }
+        memoryUsedBytes: { type: integer, minimum: 0 }
+        diskTotalBytes: { type: integer, minimum: 0 }
+        diskUsedBytes: { type: integer, minimum: 0 }
         bootId: { type: string }
+    AgonWindowsMsiInput:
+      type: object
+      required: [architecture, group, allowUnattended]
+      properties:
+        architecture:
+          type: string
+          enum: [amd64]
+        group: { type: string, minLength: 1, maxLength: 80 }
+        allowUnattended: { type: boolean }
     AgonPairState:
       type: object
       required: [status]

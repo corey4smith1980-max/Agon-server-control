@@ -7,12 +7,33 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+func TestCurrentDeviceInfoReportsHostInventory(t *testing.T) {
+	info := currentDeviceInfo(Config{DeviceName: "inventory-test", Group: "Engineering"})
+	if info.Hostname == "" || info.CPUs < 1 || info.OS == "" || info.OSVersion == "" {
+		t.Fatalf("basic host inventory is incomplete: %+v", info)
+	}
+	if len(info.IPAddresses) > 12 {
+		t.Fatalf("reported %d IP addresses, limit is 12", len(info.IPAddresses))
+	}
+	if info.MemoryUsedBytes > info.MemoryTotalBytes && info.MemoryTotalBytes != 0 {
+		t.Fatal("reported memory usage is greater than total memory")
+	}
+	if info.DiskUsedBytes > info.DiskTotalBytes && info.DiskTotalBytes != 0 {
+		t.Fatal("reported disk usage is greater than total disk")
+	}
+	if (runtime.GOOS == "linux" || runtime.GOOS == "windows") &&
+		(info.MemoryTotalBytes == 0 || info.DiskTotalBytes == 0) {
+		t.Fatal("expected memory and system disk capacity on this platform")
+	}
+}
 
 func TestPairRequestSendsNativeHeaders(t *testing.T) {
 	headers := make(chan http.Header, 1)

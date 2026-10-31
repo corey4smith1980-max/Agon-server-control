@@ -1,10 +1,10 @@
 # Agon endpoint agent
 
-Version 1.0.2 — consent-based endpoint inventory, diagnostics, and Windows interactive desktop support.
+Version 1.0.3 — consent-based endpoint inventory, diagnostics, and Windows interactive desktop support.
 
 ## What the agent does
 
-The service agent makes an outbound TLS WebSocket connection to the relay URL in `agent.json`. On first setup it creates a stable device ID and a random device credential locally, then prints a pairing code. The credential remains inactive until an operator enters that code in the console. The service reports basic host inventory and diagnostics.
+The service agent makes an outbound TLS WebSocket connection to the relay URL in `agent.json`. On first setup it creates a stable device ID and a random device credential locally, then prints a pairing code. The credential remains inactive until an operator enters that code in the console. Inventory includes OS version, processor model and core count, memory and system-disk usage, and active non-loopback IP addresses where the platform exposes them.
 
 On Windows, the installer also starts a separate, visible desktop companion in the signed-in user's session and configures it to start visibly at future sign-ins. The companion opens a local consent dialog for every interactive session. Only after approval does it stream a bounded desktop view and accept allowlisted pointer and keyboard events. Closing the companion disconnects it. Secure sign-in and UAC desktops are not shared. Other platforms currently remain inventory/diagnostics only.
 
@@ -18,7 +18,7 @@ Stop with Ctrl+C. The endpoint must use HTTPS/WSS except for localhost developme
 
 ## Service installation
 
-Use the generated package from the console. It contains the right binary, configuration, and installer. Service installation always requires `-consent` and elevated privileges where applicable.
+Use the generated package from the console. Windows packages are MSI files with the service, organization config, a visible desktop companion shortcut, and standard uninstall registration. Launch the companion from Start after installation to display the device pairing code. Service installation requires administrator approval.
 
 - Windows: `install.ps1` registers a real Windows service named `AgonAgent` and adds the visible user-session companion to the current user's startup.
 - Linux: `install.sh` installs a hardened systemd unit running as the `agonagent` system user.

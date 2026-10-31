@@ -17,9 +17,16 @@ export interface Device {
   lastSeen: string
   agentVersion: string
   relay: string
-  cpu: number
-  memory: number
-  disk: number
+  cpu: number | null
+  memory: number | null
+  disk: number | null
+  cpuCores?: number
+  cpuModel?: string
+  osVersion?: string
+  memoryTotalBytes?: number
+  memoryUsedBytes?: number
+  diskTotalBytes?: number
+  diskUsedBytes?: number
   user: string
   tags: string[]
   access: 'unattended' | 'interactive'

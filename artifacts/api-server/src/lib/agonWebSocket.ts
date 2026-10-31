@@ -1,6 +1,7 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, Server as HttpServer } from "node:http";
 import type { Duplex } from "node:stream";
+import { isIP } from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
 import {
   addAudit,
@@ -27,10 +28,17 @@ type AgentDeviceInfo = {
   name?: string;
   group?: string;
   os?: string;
+  osVersion?: string;
   arch?: string;
   agent?: string;
   cpus?: number;
+  cpuModel?: string;
   interfaces?: number;
+  ipAddresses?: string[];
+  memoryTotalBytes?: number;
+  memoryUsedBytes?: number;
+  diskTotalBytes?: number;
+  diskUsedBytes?: number;
 };
 
 type AgentMessage = {
@@ -79,6 +87,20 @@ function text(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value.slice(0, 200) : fallback;
 }
 
+function byteCount(value: unknown, fallback: unknown): number | undefined {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return value;
+  return typeof fallback === "number" && Number.isSafeInteger(fallback) && fallback >= 0
+    ? fallback
+    : undefined;
+}
+
+function ipAddresses(value: unknown, fallback: unknown): string[] {
+  const source = Array.isArray(value) ? value : Array.isArray(fallback) ? fallback : [];
+  return source
+    .filter((entry): entry is string => typeof entry === "string" && isIP(entry) !== 0)
+    .slice(0, 12);
+}
+
 async function updateHeartbeat(
   ownerId: string,
   deviceId: string,
@@ -93,12 +115,19 @@ async function updateHeartbeat(
     name: text(info?.name, text(current.data.name)),
     group: text(info?.group, text(current.data.group, "Unassigned")),
     os: text(info?.os, text(current.data.os)),
+    osVersion: text(info?.osVersion, text(current.data.osVersion)),
     arch: text(info?.arch, text(current.data.arch)),
     agent: text(info?.agent, text(current.data.agent, "1.0.0")),
     cpus: Number.isFinite(info?.cpus) ? info?.cpus : current.data.cpus,
+    cpuModel: text(info?.cpuModel, text(current.data.cpuModel)),
     interfaces: Number.isFinite(info?.interfaces)
       ? info?.interfaces
       : current.data.interfaces,
+    ipAddresses: ipAddresses(info?.ipAddresses, current.data.ipAddresses),
+    memoryTotalBytes: byteCount(info?.memoryTotalBytes, current.data.memoryTotalBytes),
+    memoryUsedBytes: byteCount(info?.memoryUsedBytes, current.data.memoryUsedBytes),
+    diskTotalBytes: byteCount(info?.diskTotalBytes, current.data.diskTotalBytes),
+    diskUsedBytes: byteCount(info?.diskUsedBytes, current.data.diskUsedBytes),
     online: true,
     lastSeen,
   });
@@ -173,7 +202,7 @@ async function completeJob(
           companion.socket.send(JSON.stringify({ type: "desktop_resume", sessionId: session.id }));
         }
       } else {
-        sendViewerStatus(session.id, status);
+        sendViewerStatus(session.id, String(status));
       }
       await addAudit(
         ownerId,
@@ -553,7 +582,7 @@ export function attachAgonWebSockets(server: HttpServer): void {
           socket.close(1003, "Text JSON messages required");
           return;
         }
-        if (raw.length > 2048) {
+        if (Buffer.byteLength(raw.toString()) > 2048) {
           socket.close(1009, "Desktop input message too large");
           return;
         }
@@ -617,6 +646,10 @@ export function attachAgonWebSockets(server: HttpServer): void {
       return;
     }
 
+    if (!context) {
+      socket.close(1008, "Invalid agent credentials");
+      return;
+    }
     const { deviceId, ownerId, channel } = context;
     const logDeviceId = deviceId.slice(0, 8);
     const connectionMap = channel === "companion" ? companionConnections : connections;
@@ -697,7 +730,8 @@ export function attachAgonWebSockets(server: HttpServer): void {
           const active = activeDesktopSessions.get(message.sessionId);
           const viewer = viewerConnections.get(message.sessionId);
           if (
-            active?.ownerId !== ownerId ||
+            !active ||
+            active.ownerId !== ownerId ||
             active.deviceId !== deviceId ||
             !viewer ||
             viewer.ownerId !== ownerId ||

@@ -35,6 +35,8 @@ export * from './agonPairStateStatus';
 export * from './agonRenameOrganizationInput';
 export * from './agonUpdateMemberRoleInput';
 export * from './agonUpdateMemberRoleInputRole';
+export * from './agonWindowsMsiInput';
+export * from './agonWindowsMsiInputArchitecture';
 export * from './healthStatus';
 export * from './pendingAgonDevice';
 export * from './pendingAgonDevices';

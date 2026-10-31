@@ -3,7 +3,7 @@ import { ArrowDownUp, Download, Edit3, Filter, Grid2X2, List, MoreHorizontal, Pa
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import type { Device, Platform } from '../lib/types'
-import { cn, downloadText, openSessionLauncher, timeAgo, toCsv } from '../lib/utils'
+import { cn, downloadText, formatBytes, openSessionLauncher, timeAgo, toCsv } from '../lib/utils'
 import { useAppStore } from '../store/AppStore'
 import { Badge, Button, DetailRow, Drawer, EmptyState, IconButton, Modal, PageHeader, Panel, PlatformIcon, Progress, StatusBadge } from '../components/UI'
 
@@ -29,12 +29,22 @@ function DeviceDrawer({ device, onClose }: { device: Device; onClose: () => void
     </div>
     <div className="border-b border-white/[0.07] p-6">
       <div className="mb-5 flex items-center justify-between"><h3 className="font-display text-sm font-semibold text-white">Endpoint telemetry</h3><span className="font-mono text-[9px] text-slate-600">LAST SEEN {timeAgo(device.lastSeen).toUpperCase()}</span></div>
-      <div className="space-y-4">{[{ label: 'CPU load', value: device.cpu }, { label: 'Memory', value: device.memory }, { label: 'Disk used', value: device.disk }].map((metric) => <div key={metric.label}><div className="mb-2 flex justify-between text-[11px]"><span className="text-slate-500">{metric.label}</span><span className="font-mono text-slate-300">{metric.value}%</span></div><Progress value={metric.value} tone={metric.value > 85 ? 'red' : metric.value > 70 ? 'amber' : 'lime'} /></div>)}</div>
+      <div className="space-y-4">
+        <div className="rounded-xl border border-white/[0.05] bg-white/[0.015] p-3">
+          <p className="text-[10px] text-slate-500">Processor</p>
+          <p className="mt-1 text-[11px] text-slate-200">{device.cpuModel || 'Model not reported'}{device.cpuCores ? ` · ${device.cpuCores} cores` : ''}</p>
+        </div>
+        {[{ label: 'Memory used', value: device.memory, used: device.memoryUsedBytes, total: device.memoryTotalBytes }, { label: 'System disk used', value: device.disk, used: device.diskUsedBytes, total: device.diskTotalBytes }].map((metric) => <div key={metric.label}>
+          <div className="mb-2 flex justify-between text-[11px]"><span className="text-slate-500">{metric.label}</span><span className="font-mono text-slate-300">{metric.value === null ? 'Not reported' : `${metric.value}%`}</span></div>
+          {metric.value !== null && <Progress value={metric.value} tone={metric.value > 85 ? 'red' : metric.value > 70 ? 'amber' : 'lime'} />}
+          <p className="mt-1 text-[9px] text-slate-600">{metric.total ? `${formatBytes(metric.used ?? 0)} of ${formatBytes(metric.total)}` : 'Waiting for agent inventory'}</p>
+        </div>)}
+      </div>
       <div className="mt-5 grid grid-cols-3 gap-2">{[{ label: 'Relay', value: device.relay }, { label: 'Agent', value: `v${device.agentVersion}` }, { label: 'Access', value: device.access }].map((item) => <div key={item.label} className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3"><p className="font-mono text-[8px] uppercase tracking-wider text-slate-600">{item.label}</p><p className="mt-1.5 truncate text-[11px] text-slate-300">{item.value}</p></div>)}</div>
     </div>
     <div className="border-b border-white/[0.07] p-6">
       <div className="mb-2 flex items-center justify-between"><h3 className="font-display text-sm font-semibold text-white">Device record</h3><Button size="sm" variant="ghost" icon={Edit3} onClick={() => setEditing((value) => !value)}>{editing ? 'Cancel' : 'Edit'}</Button></div>
-      {editing ? <div className="space-y-4 rounded-xl border border-lime-300/15 bg-lime-300/[0.025] p-4"><div><label className="label">Device group</label><select className="input" value={group} onChange={(event) => setGroup(event.target.value)}>{groups.map((item) => <option key={item}>{item}</option>)}</select></div><div><label className="label">Access policy</label><select className="input" value={access} onChange={(event) => setAccess(event.target.value as Device['access'])}><option value="interactive">Interactive consent</option><option value="unattended">Authorized unattended</option></select><p className="mt-2 text-[10px] leading-4 text-slate-500">Changing this console record does not rewrite the installed endpoint config. Generate a new package for live agents.</p></div><Button variant="primary" size="sm" onClick={save}>Save device record</Button></div> : <div><DetailRow label="Group" value={device.group} /><DetailRow label="Signed-in user" value={device.user} /><DetailRow label="IP address" value={<span className="font-mono text-[11px]">{device.ip}</span>} /><DetailRow label="Location" value={device.location} /><DetailRow label="Device ID" value={<span className="font-mono text-[10px]">{device.id}</span>} /></div>}
+      {editing ? <div className="space-y-4 rounded-xl border border-lime-300/15 bg-lime-300/[0.025] p-4"><div><label className="label">Device group</label><select className="input" value={group} onChange={(event) => setGroup(event.target.value)}>{groups.map((item) => <option key={item}>{item}</option>)}</select></div><div><label className="label">Access policy</label><select className="input" value={access} onChange={(event) => setAccess(event.target.value as Device['access'])}><option value="interactive">Interactive consent</option><option value="unattended">Authorized unattended</option></select><p className="mt-2 text-[10px] leading-4 text-slate-500">Changing this console record does not rewrite the installed endpoint config. Generate a new package for live agents.</p></div><Button variant="primary" size="sm" onClick={save}>Save device record</Button></div> : <div><DetailRow label="Operating system" value={device.osVersion || device.os} /><DetailRow label="Group" value={device.group} /><DetailRow label="Signed-in user" value={device.user} /><DetailRow label="IP address" value={<span className="font-mono text-[11px]">{device.ip}</span>} /><DetailRow label="Location" value={device.location} /><DetailRow label="Device ID" value={<span className="font-mono text-[10px]">{device.id}</span>} /></div>}
     </div>
     <div className="p-6"><h3 className="font-display text-sm font-semibold text-white">Diagnostic actions</h3><p className="mt-1 text-[11px] leading-5 text-slate-500">Actions use the agent allowlist. Lab targets return emulated results; live paired targets use your configured relay.</p><div className="mt-4 grid gap-2"><Button icon={Wifi} onClick={() => runJob('agent.ping', [device.id])}>Ping agent</Button><Button icon={ShieldCheck} onClick={() => runJob('diagnostics.network', [device.id])}>Network diagnostics</Button></div><div className="mt-4 flex flex-wrap gap-2">{device.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}</div></div>
   </Drawer>
@@ -71,6 +81,7 @@ export default function Devices() {
 
   return <div>
     <PageHeader eyebrow="Endpoint estate" title="Devices" description="Search, govern and troubleshoot every approved endpoint from one policy-aware inventory." actions={<><Button icon={Download} onClick={() => exportDevices()}>Export CSV</Button><Button variant="primary" icon={PackagePlus} onClick={() => navigate('/deployment')}>Deploy agent</Button></>} />
+    {window.location.hostname.endsWith('.replit.dev') && <div className="mb-4 rounded-xl border border-amber-300/15 bg-amber-300/[0.035] p-4 text-[10px] leading-5 text-amber-100/80">This development preview has separate inventory. Your installed laptop agent connects to the published relay, so view it in the <a className="underline underline-offset-2" href="https://agon-server-control.replit.app/devices" target="_blank" rel="noreferrer">published Devices page</a>.</div>}
     <Panel className="overflow-hidden">
       <div className="flex flex-col gap-3 border-b border-white/[0.07] p-4 xl:flex-row xl:items-center">
         <div className="relative min-w-0 flex-1 xl:max-w-sm"><Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" /><input className="input pl-9" placeholder="Search name, user, IP or tag…" value={query} onChange={(event) => setQuery(event.target.value)} />{query && <button onClick={() => setQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-600 hover:text-white"><X size={14} /></button>}</div>

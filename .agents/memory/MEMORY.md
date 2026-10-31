@@ -3,3 +3,4 @@
 - [Agon relay stability](agon-relay-stability.md) — bound reconnect retries, detect half-open WebSockets, and recover stale queued work.
 - [Agon hosted relay choice](agon-hosted-relay-choice.md) — use the custom WSS relay on Replit; it is not RustDesk-protocol compatible.
 - [Agon enterprise roadmap](agon-enterprise-roadmap.md) — include organization roles and policy-gated unattended support; defer billing for organization and parent plans.
+- [Agon Windows MSI packaging](agon-windows-msi-packaging.md) — Linux wixl supports x64 MSI here; keep ARM64 on its native PowerShell package until ARM MSI is validated.

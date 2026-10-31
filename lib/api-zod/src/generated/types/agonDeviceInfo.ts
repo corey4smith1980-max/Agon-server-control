@@ -15,13 +15,30 @@ export interface AgonDeviceInfo {
   group: string;
   /** @maxLength 100 */
   os: string;
+  /** @maxLength 120 */
+  osVersion?: string;
   /** @maxLength 40 */
   arch: string;
   /** @maxLength 40 */
   agent: string;
   /** @minimum 0 */
   cpus: number;
+  /** @maxLength 180 */
+  cpuModel?: string;
   /** @minimum 0 */
   interfaces: number;
+  /**
+     * @maxItems 12
+     * @items.maxLength 64
+     */
+  ipAddresses?: string[];
+  /** @minimum 0 */
+  memoryTotalBytes?: number;
+  /** @minimum 0 */
+  memoryUsedBytes?: number;
+  /** @minimum 0 */
+  diskTotalBytes?: number;
+  /** @minimum 0 */
+  diskUsedBytes?: number;
   bootId?: string;
 }
