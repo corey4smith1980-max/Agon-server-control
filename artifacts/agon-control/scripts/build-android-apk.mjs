@@ -15,6 +15,7 @@ const sdkManagerEnv = {
   ANDROID_SDK_ROOT: sdkRoot,
 };
 const sdkManager = process.env.SDKMANAGER || 'sdkmanager';
+const mode = process.argv[2] || 'package';
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -64,33 +65,34 @@ async function ensureAndroidSdk() {
 }
 
 await ensureAndroidSdk();
-console.log('Building debug-signed ABI-independent APK (Android 8.0+; target API 37).');
-const gradleWrapper = path.join(androidRoot, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
-const gradleCommand = process.env.GRADLE_BIN || (await exists(gradleWrapper) ? gradleWrapper : 'gradle');
-run(gradleCommand, ['--no-daemon', 'assembleDebug']);
+if (mode === 'prepare') {
+  console.log(`Android SDK ready at ${sdkRoot}.`);
+} else if (mode === 'package') {
+  const builtApk = path.join(androidRoot, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
+  const apkInfo = await stat(builtApk);
+  if (apkInfo.size < 1024 * 1024) {
+    throw new Error(`APK is unexpectedly small (${apkInfo.size} bytes).`);
+  }
 
-const builtApk = path.join(androidRoot, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
-const apkInfo = await stat(builtApk);
-if (apkInfo.size < 1024 * 1024) {
-  throw new Error(`APK is unexpectedly small (${apkInfo.size} bytes).`);
-}
+  const apkName = 'agon-agent-android-universal-v1.0.4.apk';
+  const outputs = [
+    path.join(artifactRoot, 'public', 'agent', apkName),
+    path.join(artifactRoot, 'dist', 'public', 'agent', apkName),
+  ];
+  for (const output of outputs) {
+    await mkdir(path.dirname(output), { recursive: true });
+    await copyFile(builtApk, output);
+  }
 
-const apkName = 'agon-agent-android-universal-v1.0.4.apk';
-const outputs = [
-  path.join(artifactRoot, 'public', 'agent', apkName),
-  path.join(artifactRoot, 'dist', 'public', 'agent', apkName),
-];
-for (const output of outputs) {
-  await mkdir(path.dirname(output), { recursive: true });
-  await copyFile(builtApk, output);
+  const apksigner = path.join(sdkRoot, 'build-tools', '37.0.0', 'apksigner');
+  if (await exists(apksigner)) {
+    run(apksigner, ['verify', '--verbose', outputs[0]]);
+  }
+  const gradle = await readFile(path.join(androidRoot, 'app', 'build.gradle'), 'utf8');
+  if (!gradle.includes('minSdk 26') || !gradle.includes('targetSdk 37')) {
+    throw new Error('Android APK SDK compatibility settings are missing.');
+  }
+  console.log(`Packaged ${apkName} (${apkInfo.size} bytes).`);
+} else {
+  throw new Error('Usage: build-android-apk.mjs [prepare|package]');
 }
-
-const apksigner = path.join(sdkRoot, 'build-tools', '37.0.0', 'apksigner');
-if (await exists(apksigner)) {
-  run(apksigner, ['verify', '--verbose', outputs[0]]);
-}
-const gradle = await readFile(path.join(androidRoot, 'app', 'build.gradle'), 'utf8');
-if (!gradle.includes('minSdk 26') || !gradle.includes('targetSdk 37')) {
-  throw new Error('Android APK SDK compatibility settings are missing.');
-}
-console.log(`Built ${apkName} (${apkInfo.size} bytes)`);

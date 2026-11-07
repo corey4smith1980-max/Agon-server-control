@@ -1,3 +1,11 @@
 plugins {
     id "com.android.application" version "9.5.1" apply false
 }
+
+tasks.register("packageAgentArtifacts", Exec) {
+    group = "build"
+    description = "Build the Android APK and publish its deployment downloads."
+    dependsOn(":app:assembleDebug")
+    workingDir projectDir
+    commandLine("sh", "../scripts/package-android-artifacts.sh")
+}

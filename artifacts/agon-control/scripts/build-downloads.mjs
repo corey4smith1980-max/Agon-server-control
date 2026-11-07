@@ -65,19 +65,6 @@ for (const target of builds) {
   });
 }
 
-if (process.env.BUILD_ANDROID_APK === '1') {
-  const result = spawnSync(
-    process.execPath,
-    [path.join(projectRoot, 'scripts', 'build-android-apk.mjs')],
-    { cwd: projectRoot, env: process.env, stdio: 'inherit' },
-  );
-  if (result.error || result.status !== 0) {
-    throw new Error(
-      `Could not build the Android APK: ${result.error?.message ?? `builder exited with ${result.status}`}`,
-    );
-  }
-}
-
 const androidApkName = 'agon-agent-android-universal-v1.0.4.apk';
 try {
   const apk = await readFile(path.join(publicAgentOutput, androidApkName));
@@ -177,6 +164,14 @@ const androidAgentSourceFiles = [
 androidAgentSourceFiles.push([
   'scripts/build-android-apk.mjs',
   path.join(projectRoot, 'scripts', 'build-android-apk.mjs'),
+]);
+androidAgentSourceFiles.push([
+  'scripts/build-android.sh',
+  path.join(projectRoot, 'scripts', 'build-android.sh'),
+]);
+androidAgentSourceFiles.push([
+  'scripts/package-android-artifacts.sh',
+  path.join(projectRoot, 'scripts', 'package-android-artifacts.sh'),
 ]);
 
 const agentBuildFiles = [
