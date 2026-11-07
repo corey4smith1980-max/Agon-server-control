@@ -26,7 +26,7 @@ await Promise.all([
   mkdir(agentOutput, { recursive: true }),
   mkdir(publicAgentOutput, { recursive: true }),
 ]);
-const manifest = { version: '1.0.3', artifacts: [] };
+const manifest = { version: '1.0.4', artifacts: [] };
 
 for (const target of builds) {
   const filename = `agon-agent-${target.platform}-${target.arch}${target.extension}`;
@@ -40,7 +40,8 @@ for (const target of builds) {
         ...process.env,
         CGO_ENABLED: '0',
         GOOS: target.goos,
-        GOARCH: target.arch,
+        GOARCH: target.goarch ?? target.arch,
+        ...(target.goarm ? { GOARM: target.goarm } : {}),
     },
       stdio: 'inherit',
     },
@@ -62,6 +63,38 @@ for (const target of builds) {
     sha256: createHash('sha256').update(binary).digest('hex'),
     version: manifest.version,
   });
+}
+
+if (process.env.BUILD_ANDROID_APK === '1') {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(projectRoot, 'scripts', 'build-android-apk.mjs')],
+    { cwd: projectRoot, env: process.env, stdio: 'inherit' },
+  );
+  if (result.error || result.status !== 0) {
+    throw new Error(
+      `Could not build the Android APK: ${result.error?.message ?? `builder exited with ${result.status}`}`,
+    );
+  }
+}
+
+const androidApkName = 'agon-agent-android-universal-v1.0.4.apk';
+try {
+  const apk = await readFile(path.join(publicAgentOutput, androidApkName));
+  await writeFile(path.join(agentOutput, androidApkName), apk);
+  manifest.artifacts.push({
+    platform: 'android',
+    arch: 'universal',
+    file: `/agent/${androidApkName}`,
+    bytes: apk.byteLength,
+    sha256: createHash('sha256').update(apk).digest('hex'),
+    version: manifest.version,
+  });
+} catch (error) {
+  if (error?.code !== 'ENOENT') throw error;
+  if (process.env.BUILD_ANDROID_APK === '1') {
+    throw new Error('Android APK build completed without producing the expected APK.');
+  }
 }
 
 await Promise.all([
@@ -120,6 +153,32 @@ const agentFiles = [
   'README.md',
 ].map((filename) => [filename, path.join(agentSource, filename)]);
 
+const androidAgentSourceFiles = [
+  'gradlew',
+  'gradlew.bat',
+  'gradle/wrapper/gradle-wrapper.jar',
+  'gradle/wrapper/gradle-wrapper.properties',
+  'settings.gradle',
+  'build.gradle',
+  'gradle.properties',
+  'app/build.gradle',
+  'app/src/main/AndroidManifest.xml',
+  'app/src/main/java/com/agon/agent/MainActivity.java',
+  'app/src/main/java/com/agon/agent/AgentService.java',
+  'app/src/main/java/com/agon/agent/AndroidAgentConnection.java',
+  'app/src/main/res/values/strings.xml',
+  'app/src/main/res/values/styles.xml',
+  'app/src/main/res/drawable/ic_agon_agent.xml',
+  'app/src/main/res/drawable/ic_agent_status.xml',
+].map((filename) => [
+  `android-agent/${filename}`,
+  path.join(projectRoot, 'android-agent', filename),
+]);
+androidAgentSourceFiles.push([
+  'scripts/build-android-apk.mjs',
+  path.join(projectRoot, 'scripts', 'build-android-apk.mjs'),
+]);
+
 const agentBuildFiles = [
   ['manifest.json', path.join(agentOutput, 'manifest.json')],
   ['SHA256SUMS', path.join(agentOutput, 'SHA256SUMS')],
@@ -131,8 +190,8 @@ const agentBuildFiles = [
 ];
 
 await Promise.all([
-  makeZip(agentFiles, path.join(downloads, 'agon-agent-source.zip')),
+  makeZip([...agentFiles, ...androidAgentSourceFiles], path.join(downloads, 'agon-agent-source.zip')),
   makeZip(agentBuildFiles, path.join(downloads, 'agon-agent-builds.zip')),
-  makeZip(agentFiles, path.join(publicDownloads, 'agon-agent-source.zip')),
+  makeZip([...agentFiles, ...androidAgentSourceFiles], path.join(publicDownloads, 'agon-agent-source.zip')),
   makeZip(agentBuildFiles, path.join(publicDownloads, 'agon-agent-builds.zip')),
 ]);

@@ -1,6 +1,6 @@
 # Agon endpoint agent
 
-Version 1.0.3 — consent-based endpoint inventory, diagnostics, and Windows interactive desktop support.
+Version 1.0.4 — consent-based endpoint inventory, diagnostics, and Windows interactive desktop support.
 
 ## What the agent does
 
@@ -23,7 +23,8 @@ Use the generated package from the console. Windows packages are MSI files with 
 - Windows: `install.ps1` registers a real Windows service named `AgonAgent` and adds the visible user-session companion to the current user's startup.
 - Linux: `install.sh` installs a hardened systemd unit running as the `agonagent` system user.
 - macOS: `install.sh` installs a LaunchDaemon visible as `com.agon.agent`.
-- Android: `install-android.sh` uses ADB to place and start the ARM64 binary. Production boot persistence must be granted explicitly by your MDM; no covert persistence is configured.
+- Android: install the ABI-independent APK on Android 8.0+ (API 26+) devices; it targets Android 17 (API 37). The app asks for the Agon organization ID, starts the agent in a user-started foreground service, and displays the device-generated pairing code. It does not auto-start at boot or implement Android screen sharing/input control.
+- Android's universal APK is debug-signed for internal sideload testing. Use a stable organization-owned signing key before distributing upgrades broadly.
 
 ## Uninstall
 
@@ -40,6 +41,8 @@ go build -trimpath -o agon-agent .
 
 Cross compilation uses `CGO_ENABLED=0`, `GOOS`, and `GOARCH`. Windows service integration is compiled only for Windows; Linux/macOS service installers use their native service managers.
 
+The Android APK build uses the included Gradle wrapper, JDK 21, Android SDK API 37, and Build Tools 37.0.0. From the workspace root, run `pnpm --filter @workspace/agon-control run build:android`; the script downloads missing Android SDK components to the ignored `.cache/android-sdk` directory and produces the APK plus its checksum manifest.
+
 ## Automated relay smoke test
 
 From the workspace root, run:
@@ -48,4 +51,4 @@ From the workspace root, run:
 pnpm --filter @workspace/agon-control run test:relay
 ```
 
-This cross-builds the Linux agent and Windows x64 executable, checks the published API target and key Windows installer guards, then runs the Linux agent against an isolated real relay through pairing, approval, WebSocket connection, and relay restart recovery. Replit validation captures each run's output for error tracking. This is not a Windows VM test: it cannot verify Windows Service Control Manager, desktop capture, consent dialog, or input behavior without an actual Windows VM.
+This cross-builds the Linux agent and Windows x64 executable, checks the published API target and installer guards, then runs the Linux agent against an isolated real relay through pairing, approval, WebSocket connection, and relay restart recovery. Replit validation captures each run's output for error tracking. It does not verify Android process execution on a physical device or Windows Service Control Manager, desktop capture, consent dialog, or input behavior without the respective device/VM.

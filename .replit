@@ -1,4 +1,4 @@
-modules = ["nodejs-24", "postgresql-16", "python-base-3.13", "go-1.25", "java-graalvm22.3"]
+modules = ["nodejs-24", "postgresql-16", "python-base-3.13", "go-1.25"]
 
 [deployment]
 router = "application"
@@ -41,4 +41,4 @@ timeoutMs = 20000
 
 [nix]
 channel = "stable-25_05"
-packages = ["msitools"]
+packages = ["msitools", "gradle", "android-tools", "sdkmanager", "jdk21"]

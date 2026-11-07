@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/build-downloads.mjs && vite --config vite.config.ts --host 0.0.0.0",
-    "build": "vite build --config vite.config.ts && node scripts/build-downloads.mjs",
+    "build": "vite build --config vite.config.ts && BUILD_ANDROID_APK=1 node scripts/build-downloads.mjs",
+    "build:android": "BUILD_ANDROID_APK=1 node scripts/build-downloads.mjs",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:relay": "node scripts/test-agent-relay.mjs"

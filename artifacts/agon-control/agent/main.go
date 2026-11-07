@@ -29,7 +29,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const agentVersion = "1.0.3"
+const agentVersion = "1.0.4"
 
 type Config struct {
 	ServerURL        string `json:"serverUrl"`

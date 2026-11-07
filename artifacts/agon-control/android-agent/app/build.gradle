@@ -1,0 +1,22 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "com.agon.agent"
+    compileSdk 37
+    buildToolsVersion "37.0.0"
+
+    defaultConfig {
+        applicationId "com.agon.agent"
+        minSdk 26
+        targetSdk 37
+        versionCode 104
+        versionName "1.0.4"
+    }
+
+}
+
+dependencies {
+    implementation "com.squareup.okhttp3:okhttp:4.12.0"
+}

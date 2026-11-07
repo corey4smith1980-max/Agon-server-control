@@ -56,3 +56,6 @@ Thumbs.db
 /.conversation/attached_assets/
 /artifacts/agon-control/public/agent/
 /artifacts/agon-control/public/downloads/agon-*.zip
+/artifacts/agon-control/android-agent/.gradle/
+/artifacts/agon-control/android-agent/build/
+/artifacts/agon-control/android-agent/app/build/
