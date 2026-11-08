@@ -43,6 +43,8 @@ Agon is a web console for explicitly managed endpoint inventory, support-policy 
 - Build checksummed, configured endpoint packages for Windows, macOS, Linux, and Android ARM64.
 - Run the operator console with the Replit-hosted Agon WebSocket relay; the optional standalone relay uses an admin token and exact allowed browser origin.
 
+**Enterprise upgrade (ScreenConnect style)**: See `ENTERPRISE.md` for advanced features including policy controls, session tools (file, shell, chat, clipboard), higher-resolution desktop streaming, and expanded allowlisted actions.
+
 ## User preferences
 
 The console currently uses a shared relay administrator bearer token kept in browser session storage; it does not provide account-level sign-in. Keep the published console private until an organization identity provider or equivalent operator authentication is configured.

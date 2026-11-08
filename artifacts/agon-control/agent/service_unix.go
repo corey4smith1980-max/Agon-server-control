@@ -23,30 +23,36 @@ func installPlatform(configPath string) error {
 	if err != nil {
 		return err
 	}
-	_ = exec.Command("useradd", "--system", "--home", "/nonexistent", "--shell", "/usr/sbin/nologin", "agonagent").Run()
-	_ = exec.Command("chown", "agonagent:agonagent", config).Run()
+	// Higher privilege option: can run as root for enterprise system-level access
+	user := "agonagent"
+	if cfgPrivilegeIsSystem() {
+		user = "root"
+	} else {
+		_ = exec.Command("useradd", "--system", "--home", "/nonexistent", "--shell", "/usr/sbin/nologin", "agonagent").Run()
+		_ = exec.Command("chown", "agonagent:agonagent", config).Run()
+	}
 	_ = os.Chmod(config, 0600)
 	unit := fmt.Sprintf(`[Unit]
- Description=Agon consent-based endpoint agent
+Description=Agon enterprise remote support agent (ScreenConnect-style)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
- User=agonagent
- Group=agonagent
+User=%s
+Group=%s
 ExecStart=%s -config %s
 Restart=always
 RestartSec=5
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-ProtectSystem=strict
- ReadWritePaths=/etc/agon-agent
+NoNewPrivileges=false
+PrivateTmp=false
+ProtectHome=false
+ProtectSystem=false
+ReadWritePaths=/etc/agon-agent
 
 [Install]
 WantedBy=multi-user.target
-`, executable, config)
+`, user, user, executable, config)
 	if err := os.WriteFile("/etc/systemd/system/agon-agent.service", []byte(unit), 0644); err != nil {
 		return err
 	}
@@ -56,6 +62,11 @@ WantedBy=multi-user.target
 		}
 	}
 	return nil
+}
+
+func cfgPrivilegeIsSystem() bool {
+	// Placeholder: in full implementation read from config; defaults to false for safety
+	return false
 }
 
 func installLaunchDaemon(configPath string) error {

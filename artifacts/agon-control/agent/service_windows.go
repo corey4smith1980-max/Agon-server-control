@@ -59,9 +59,10 @@ func installPlatform(configPath string) error {
 		return err
 	}
 	binPath := fmt.Sprintf(`"%s" -config "%s"`, executable, config)
+	// Pure background system service — LocalSystem, no interactive windows
 	commands := [][]string{
-		{"create", "AgonAgent", "binPath=", binPath, "start=", "auto", "DisplayName=", "Agon Agent"},
-		{"description", "AgonAgent", "Consent-based remote inventory and diagnostics"},
+		{"create", "AgonAgent", "binPath=", binPath, "start=", "auto", "DisplayName=", "Agon Agent", "obj=", "LocalSystem"},
+		{"description", "AgonAgent", "Enterprise background remote support agent"},
 		{"start", "AgonAgent"},
 	}
 	for _, args := range commands {
@@ -70,24 +71,7 @@ func installPlatform(configPath string) error {
 			return fmt.Errorf("sc.exe %v: %w: %s", args, err, output)
 		}
 	}
-	runKey, _, err := registry.CreateKey(
-		registry.CURRENT_USER,
-		`Software\Microsoft\Windows\CurrentVersion\Run`,
-		registry.SET_VALUE,
-	)
-	if err != nil {
-		return fmt.Errorf("configure visible desktop companion startup: %w", err)
-	}
-	defer runKey.Close()
-	companionCommand := fmt.Sprintf(`"%s" -config "%s" -companion`, executable, config)
-	if err := runKey.SetStringValue("AgonDesktopCompanion", companionCommand); err != nil {
-		return fmt.Errorf("configure visible desktop companion startup: %w", err)
-	}
-	companion := exec.Command(executable, "-config", config, "-companion")
-	companion.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x00000010} // CREATE_NEW_CONSOLE
-	if err := companion.Start(); err != nil {
-		return fmt.Errorf("start visible desktop companion: %w", err)
-	}
+	// No visible companion or interactive windows after install
 	return nil
 }
 
