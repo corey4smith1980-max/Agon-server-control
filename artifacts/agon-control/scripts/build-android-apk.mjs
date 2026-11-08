@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, stat } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -68,7 +68,7 @@ await ensureAndroidSdk();
 if (mode === 'prepare') {
   console.log(`Android SDK ready at ${sdkRoot}.`);
 } else if (mode === 'package') {
-  const builtApk = path.join(androidRoot, 'app', 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
+  const builtApk = path.join(androidRoot, 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk');
   const apkInfo = await stat(builtApk);
   if (apkInfo.size < 1024 * 1024) {
     throw new Error(`APK is unexpectedly small (${apkInfo.size} bytes).`);
@@ -85,14 +85,37 @@ if (mode === 'prepare') {
   }
 
   const apksigner = path.join(sdkRoot, 'build-tools', '37.0.0', 'apksigner');
-  if (await exists(apksigner)) {
-    run(apksigner, ['verify', '--verbose', outputs[0]]);
+  if (!(await exists(apksigner))) {
+    throw new Error('apksigner is required to verify the release signature.');
+  }
+  const verified = spawnSync(apksigner, ['verify', '--verbose', '--print-certs', outputs[0]], {
+    encoding: 'utf8',
+  });
+  const report = `${verified.stdout || ''}\n${verified.stderr || ''}`;
+  if (verified.status !== 0) {
+    throw new Error(`Release APK signature verification failed: ${report}`);
+  }
+  if (/CN=Android Debug/i.test(report)) {
+    throw new Error('The APK is signed with the Android debug certificate.');
+  }
+  if (!/Verified using v2 scheme \(APK Signature Scheme v2\): true/.test(report)) {
+    throw new Error('The APK is missing an APK Signature Scheme v2 signature.');
+  }
+  const certSha256 = report.match(/SHA-256 digest:\s*([0-9a-f]+)/i)?.[1] || '';
+  const signing = {
+    scheme: ['v1', 'v2', 'v3'],
+    certificateSha256: certSha256,
+    subject: 'CN=Agon Agent, OU=Endpoint Signing, O=Agon, C=US',
+    debugCertificate: false,
+  };
+  for (const output of outputs) {
+    await writeFile(path.join(path.dirname(output), 'android-signing.json'), `${JSON.stringify(signing, null, 2)}\n`);
   }
   const gradle = await readFile(path.join(androidRoot, 'app', 'build.gradle'), 'utf8');
-  if (!gradle.includes('minSdk 26') || !gradle.includes('targetSdk 37')) {
-    throw new Error('Android APK SDK compatibility settings are missing.');
+  if (!gradle.includes('minSdk 26') || !gradle.includes('targetSdk 37') || !gradle.includes('signingConfigs')) {
+    throw new Error('Android APK SDK or release signing settings are missing.');
   }
-  console.log(`Packaged ${apkName} (${apkInfo.size} bytes).`);
+  console.log(`Packaged release-signed ${apkName} (${apkInfo.size} bytes).`);
 } else {
   throw new Error('Usage: build-android-apk.mjs [prepare|package]');
 }

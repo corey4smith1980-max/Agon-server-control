@@ -33,6 +33,8 @@ export interface Device {
   unattendedOptIn?: boolean
   location: string
   sample: boolean
+  signingKeyId?: string
+  signingCertSha256?: string
 }
 
 export interface SupportSession {
@@ -71,7 +73,7 @@ export interface Relay {
 export interface Job {
   id: string
   name: string
-  action: 'agent.ping' | 'inventory.refresh' | 'diagnostics.network' | 'session.request'
+  action: 'agent.ping' | 'inventory.refresh' | 'diagnostics.network' | 'session.request' | 'agent.upgrade'
   deviceIds: string[]
   deviceNames: string[]
   status: JobStatus
