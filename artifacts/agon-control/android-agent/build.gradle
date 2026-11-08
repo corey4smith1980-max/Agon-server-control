@@ -5,7 +5,7 @@ plugins {
 tasks.register("packageAgentArtifacts", Exec) {
     group = "build"
     description = "Build the Android APK and publish its deployment downloads."
-    dependsOn(":app:assembleDebug")
+    dependsOn(":app:assembleRelease")
     workingDir projectDir
     commandLine("sh", "../scripts/package-android-artifacts.sh")
 }

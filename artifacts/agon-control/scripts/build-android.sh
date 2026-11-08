@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 
+node scripts/ensure-android-keystore.mjs
 node scripts/build-android-apk.mjs prepare
 SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-../../.cache/android-sdk}}"
 SDK_ROOT="$(cd "$SDK_ROOT" && pwd)"
