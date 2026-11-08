@@ -137,7 +137,7 @@ function wixDocument(
         <Directory Id="AgonProgramMenu" Name="Agon Agent">
           <Component Id="VisibleCompanionShortcut" Guid="812E9B56-17B8-4F52-90B4-8199E8ED7819" Win64="yes">
             <Shortcut Id="AgonCompanionShortcut" Name="Agon Desktop Companion" Description="Optional attended companion. Not installed by the silent access feature." Target="[INSTALLDIR]agon-agent.exe" Arguments="-config &quot;[AGENTDATA]agent.json&quot; -companion" WorkingDirectory="INSTALLDIR" />
-            <RegistryValue Root="HKLM" Key="Software\\Agon\\Agent" Name="CompanionInstalled" Type="integer" Value="0" KeyPath="yes" />
+            <RegistryValue Root="HKLM" Key="Software\Agon\Agent" Name="CompanionInstalled" Type="integer" Value="0" KeyPath="yes" />
             <RemoveFolder Id="RemoveAgonProgramMenu" Directory="AgonProgramMenu" On="uninstall" />
           </Component>
         </Directory>
