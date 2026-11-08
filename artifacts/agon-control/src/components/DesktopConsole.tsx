@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
-import { AlertTriangle, CircleHelp, Keyboard, Monitor, MousePointer2, Radio, ShieldCheck, Square, Wifi, WifiOff } from 'lucide-react'
+import { AlertTriangle, CircleHelp, Keyboard, Monitor, MousePointer2, Radio, ShieldCheck, Square, Wifi, WifiOff, FolderOpen, Terminal, MessageSquare, Clipboard } from 'lucide-react'
 
 type Props = {
   sessionId: string
@@ -260,6 +260,9 @@ export default function DesktopConsole({ sessionId, deviceName, sessionCode, web
           onPointerMove={(event) => handlePointer(event, 'move')}
           onPointerDown={(event) => { if (remoteStatus === 'active') { event.currentTarget.focus(); handlePointer(event, 'down') } }}
           onPointerUp={(event) => handlePointer(event, 'up')}
+          onTouchStart={(event) => { if (remoteStatus === 'active') { event.preventDefault(); handlePointer(event as any, 'down') } }}
+          onTouchMove={(event) => { if (remoteStatus === 'active') { event.preventDefault(); handlePointer(event as any, 'move') } }}
+          onTouchEnd={(event) => { if (remoteStatus === 'active') { event.preventDefault(); handlePointer(event as any, 'up') } }}
           onContextMenu={(event) => { if (remoteStatus === 'active') event.preventDefault() }}
           onKeyDown={(event) => handleKey(event, true)}
           onKeyUp={(event) => handleKey(event, false)}
@@ -291,15 +294,30 @@ export default function DesktopConsole({ sessionId, deviceName, sessionCode, web
       </div>
 
       <aside className="border-t border-white/[0.07] bg-black/[0.08] p-4 sm:p-5 lg:border-l lg:border-t-0" aria-label="Session access details">
-        <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-slate-600">Access record</p>
+        <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-slate-600">ScreenConnect-style tools</p>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button className="flex flex-col items-center gap-1 rounded-lg border border-white/10 bg-white/5 py-2 text-[9px] text-slate-300 hover:bg-white/10" disabled={remoteStatus !== 'active'}>
+            <FolderOpen size={14} /> Files
+          </button>
+          <button className="flex flex-col items-center gap-1 rounded-lg border border-white/10 bg-white/5 py-2 text-[9px] text-slate-300 hover:bg-white/10" disabled={remoteStatus !== 'active'}>
+            <Terminal size={14} /> Shell
+          </button>
+          <button className="flex flex-col items-center gap-1 rounded-lg border border-white/10 bg-white/5 py-2 text-[9px] text-slate-300 hover:bg-white/10" disabled={remoteStatus !== 'active'}>
+            <MessageSquare size={14} /> Chat
+          </button>
+          <button className="flex flex-col items-center gap-1 rounded-lg border border-white/10 bg-white/5 py-2 text-[9px] text-slate-300 hover:bg-white/10" disabled={remoteStatus !== 'active'}>
+            <Clipboard size={14} /> Clipboard
+          </button>
+        </div>
+        <p className="mt-4 font-mono text-[9px] uppercase tracking-[0.16em] text-slate-600">Access record</p>
         <div className="mt-4 rounded-xl border border-white/[0.07] bg-white/[0.02] p-3.5">
-          <div className="flex items-start gap-2.5"><ShieldCheck size={15} className="mt-0.5 shrink-0 text-cyan-300/80" /><div><p className="text-[11px] font-medium text-slate-200">Consent-gated access</p><p className="mt-1 text-[10px] leading-4 text-slate-500">The endpoint consent prompt remains authoritative. This viewer waits for the relay’s active status.</p></div></div>
+          <div className="flex items-start gap-2.5"><ShieldCheck size={15} className="mt-0.5 shrink-0 text-cyan-300/80" /><div><p className="text-[11px] font-medium text-slate-200">Consent-gated access</p><p className="mt-1 text-[10px] leading-4 text-slate-500">Enterprise policy + endpoint opt-in required. Full audit trail maintained.</p></div></div>
         </div>
         <div className="mt-4 space-y-3 border-t border-white/[0.06] pt-4">
           <div className="flex items-center gap-2 text-[10px] text-slate-500"><MousePointer2 size={13} className="text-slate-600" /><span>Pointer input</span><span className={`ml-auto ${remoteStatus === 'active' ? 'text-lime-300' : 'text-slate-600'}`}>{remoteStatus === 'active' ? 'Available' : 'Locked'}</span></div>
           <div className="flex items-center gap-2 text-[10px] text-slate-500"><Keyboard size={13} className="text-slate-600" /><span>Keyboard input</span><span className={`ml-auto ${remoteStatus === 'active' ? 'text-lime-300' : 'text-slate-600'}`}>{remoteStatus === 'active' ? 'Available' : 'Locked'}</span></div>
         </div>
-        <p className="mt-5 border-t border-white/[0.06] pt-4 text-[9px] leading-4 text-slate-600">Session activity is associated with this administrator and session code for audit review.</p>
+        <p className="mt-5 border-t border-white/[0.06] pt-4 text-[9px] leading-4 text-slate-600">Session activity is associated with this administrator and session code for audit review. Core system style: ScreenConnect.</p>
       </aside>
     </div>
   </section>
