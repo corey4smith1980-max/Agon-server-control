@@ -19,8 +19,8 @@ const (
 	biRGB            = 0
 	dibRGBColors     = 0
 	srccopy          = 0x00CC0020
-	maxDesktopWidth  = 1280
-	maxDesktopHeight = 720
+	maxDesktopWidth  = 1920
+	maxDesktopHeight = 1080
 )
 
 type bitmapInfoHeader struct {
@@ -103,10 +103,53 @@ func cancelDesktopConsent() {
 	}
 }
 
-func captureDesktopJPEG() ([]byte, int, int, error) {
-	screenWidth, _, _ := procGetSystemMetrics.Call(0)
-	screenHeight, _, _ := procGetSystemMetrics.Call(1)
-	width, height := int(screenWidth), int(screenHeight)
+const (
+	biRGB            = 0
+	dibRGBColors     = 0
+	srccopy          = 0x00CC0020
+	maxDesktopWidth  = 1920
+	maxDesktopHeight = 1080
+	smCMonitors      = 80
+	smXVIRTUALSCREEN = 76
+	smYVIRTUALSCREEN = 77
+	smCXVIRTUALSCREEN = 78
+	smCYVIRTUALSCREEN = 79
+)
+
+type MonitorInfo struct {
+	Index  int `json:"index"`
+	X      int `json:"x"`
+	Y      int `json:"y"`
+	Width  int `json:"width"`
+	Height int `json:"height"`
+	Primary bool `json:"primary"`
+}
+
+func listMonitors() []MonitorInfo {
+	count, _, _ := procGetSystemMetrics.Call(smCMonitors)
+	n := int(count)
+	if n < 1 {
+		n = 1
+	}
+	monitors := make([]MonitorInfo, 0, n)
+	// Simple virtual screen fallback for now; full EnumDisplayMonitors can be added later
+	vx, _, _ := procGetSystemMetrics.Call(smXVIRTUALSCREEN)
+	vy, _, _ := procGetSystemMetrics.Call(smYVIRTUALSCREEN)
+	vw, _, _ := procGetSystemMetrics.Call(smCXVIRTUALSCREEN)
+	vh, _, _ := procGetSystemMetrics.Call(smCYVIRTUALSCREEN)
+	monitors = append(monitors, MonitorInfo{
+		Index: 0, X: int(vx), Y: int(vy), Width: int(vw), Height: int(vh), Primary: true,
+	})
+	return monitors
+}
+
+func captureDesktopJPEG(monitorIndex int) ([]byte, int, int, error) {
+	monitors := listMonitors()
+	if monitorIndex < 0 || monitorIndex >= len(monitors) {
+		monitorIndex = 0
+	}
+	mon := monitors[monitorIndex]
+	width, height := mon.Width, mon.Height
 	if width < 1 || height < 1 || width > 16384 || height > 16384 {
 		return nil, 0, 0, errors.New("invalid desktop dimensions")
 	}
@@ -123,6 +166,65 @@ func captureDesktopJPEG() ([]byte, int, int, error) {
 		return nil, 0, 0, errors.New("CreateCompatibleDC failed")
 	}
 	defer procDeleteDC.Call(memoryDC)
+	bitmap, _, _ := procCreateCompatibleBitmap.Call(screenDC, uintptr(width), uintptr(height))
+	if bitmap == 0 {
+		return nil, 0, 0, errors.New("CreateCompatibleBitmap failed")
+	}
+	defer procDeleteObject.Call(bitmap)
+	oldObject, _, _ := procSelectObject.Call(memoryDC, bitmap)
+	if oldObject == 0 {
+		return nil, 0, 0, errors.New("SelectObject failed")
+	}
+	defer procSelectObject.Call(memoryDC, oldObject)
+	ok, _, _ := procBitBlt.Call(memoryDC, 0, 0, uintptr(width), uintptr(height), screenDC, uintptr(mon.X), uintptr(mon.Y), srccopy)
+	if ok == 0 {
+		return nil, 0, 0, errors.New("BitBlt failed")
+	}
+
+	pixels := make([]byte, width*height*4)
+	info := bitmapInfo{Header: bitmapInfoHeader{
+		Size:  uint32(unsafe.Sizeof(bitmapInfoHeader{})),
+		Width: int32(width), Height: -int32(height), Planes: 1, BitCount: 32,
+		Compression: biRGB, SizeImage: uint32(len(pixels)),
+	}}
+	lines, _, _ := procGetDIBits.Call(
+		memoryDC, bitmap, 0, uintptr(height),
+		uintptr(unsafe.Pointer(&pixels[0])),
+		uintptr(unsafe.Pointer(&info)), dibRGBColors,
+	)
+	if lines == 0 {
+		return nil, 0, 0, errors.New("GetDIBits failed")
+	}
+
+	source := image.NewRGBA(image.Rect(0, 0, width, height))
+	for i := 0; i < len(pixels); i += 4 {
+		source.Pix[i] = pixels[i+2]
+		source.Pix[i+1] = pixels[i+1]
+		source.Pix[i+2] = pixels[i]
+		source.Pix[i+3] = 255
+	}
+	outWidth, outHeight := width, height
+	scale := math.Min(1, math.Min(float64(maxDesktopWidth)/float64(width), float64(maxDesktopHeight)/float64(height)))
+	if scale < 1 {
+		outWidth = int(math.Max(1, math.Round(float64(width)*scale)))
+		outHeight = int(math.Max(1, math.Round(float64(height)*scale)))
+	}
+	target := image.NewRGBA(image.Rect(0, 0, outWidth, outHeight))
+	for y := 0; y < outHeight; y++ {
+		sourceY := y * height / outHeight
+		for x := 0; x < outWidth; x++ {
+			sourceX := x * width / outWidth
+			target.Set(x, y, source.At(sourceX, sourceY))
+		}
+	}
+	var output bytes.Buffer
+	if err := jpeg.Encode(&output, target, &jpeg.Options{Quality: 78}); err != nil {
+		return nil, 0, 0, err
+	}
+	return output.Bytes(), outWidth, outHeight, nil
+}
+
+func applyDesktopInput(input DesktopInput) error {
 	bitmap, _, _ := procCreateCompatibleBitmap.Call(screenDC, uintptr(width), uintptr(height))
 	if bitmap == 0 {
 		return nil, 0, 0, errors.New("CreateCompatibleBitmap failed")
@@ -175,7 +277,7 @@ func captureDesktopJPEG() ([]byte, int, int, error) {
 		}
 	}
 	var output bytes.Buffer
-	if err := jpeg.Encode(&output, target, &jpeg.Options{Quality: 52}); err != nil {
+	if err := jpeg.Encode(&output, target, &jpeg.Options{Quality: 72}); err != nil {
 		return nil, 0, 0, err
 	}
 	return output.Bytes(), outWidth, outHeight, nil
