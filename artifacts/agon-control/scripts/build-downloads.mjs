@@ -26,7 +26,7 @@ await Promise.all([
   mkdir(agentOutput, { recursive: true }),
   mkdir(publicAgentOutput, { recursive: true }),
 ]);
-const manifest = { version: '1.0.4', artifacts: [] };
+const manifest = { version: '1.1.0-enterprise', artifacts: [] };
 
 for (const target of builds) {
   const filename = `agon-agent-${target.platform}-${target.arch}${target.extension}`;
@@ -101,6 +101,38 @@ await Promise.all([
   writeFile(path.join(agentOutput, 'SHA256SUMS'), checksums),
   writeFile(path.join(publicAgentOutput, 'SHA256SUMS'), checksums),
 ]);
+
+// Generate platform-specific installers for all device types
+const installersDir = path.join(agentOutput, 'installers');
+await mkdir(installersDir, { recursive: true });
+
+const windowsInstaller = `@echo off
+REM Silent background system service install — no interactive windows
+set AGENT=%~dp0agon-agent-windows-amd64.exe
+if not exist "%AGENT%" set AGENT=%~dp0agon-agent-windows-arm64.exe
+"%AGENT%" -install -privilege-level system -session-mode optional
+exit /b 0
+`;
+await writeFile(path.join(installersDir, 'install-windows.bat'), windowsInstaller);
+
+const linuxInstaller = `#!/bin/bash
+# Silent background system service install
+AGENT="./agon-agent-linux-amd64"
+if [ ! -f "$AGENT" ]; then AGENT="./agon-agent-linux-arm64"; fi
+sudo "$AGENT" -install -privilege-level system -session-mode optional
+exit 0
+`;
+await writeFile(path.join(installersDir, 'install-linux.sh'), linuxInstaller);
+await writeFile(path.join(installersDir, 'install-macos.sh'), linuxInstaller.replace('linux', 'macos'));
+
+const androidNote = `# Android Agent
+The universal APK supports optional attended/unattended modes.
+Install via MDM for higher privileges / device owner mode.
+See android-agent/ for source and build scripts.
+`;
+await writeFile(path.join(installersDir, 'ANDROID.md'), androidNote);
+
+console.log('Enterprise installers generated in', installersDir);
 
 const downloads = path.join(outputRoot, 'downloads');
 const publicDownloads = path.join(publicRoot, 'downloads');
