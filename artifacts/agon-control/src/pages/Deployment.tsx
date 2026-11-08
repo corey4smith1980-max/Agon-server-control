@@ -22,7 +22,7 @@ const platformMeta: Record<Platform, { title: string; subtitle: string; icon: ty
   windows: { title: 'Windows', subtitle: 'MSI on x64 · native ARM64 package', icon: Laptop, arches: [{ value: 'amd64', label: 'x64 (Intel / AMD)' }, { value: 'arm64', label: 'ARM64' }], package: 'Windows MSI / ARM64 PowerShell ZIP' },
   macos: { title: 'macOS', subtitle: 'LaunchDaemon', icon: Apple, arches: [{ value: 'arm64', label: 'Apple silicon' }, { value: 'amd64', label: 'Intel x64' }], package: 'Native binary + shell installer' },
   linux: { title: 'Linux', subtitle: 'Hardened systemd unit', icon: Terminal, arches: [{ value: 'amd64', label: 'x64 (Intel / AMD)' }, { value: 'arm64', label: 'ARM64' }], package: 'Native binary + shell installer' },
-  android: { title: 'Android', subtitle: 'Android 8+ · universal APK', icon: Smartphone, arches: [{ value: 'universal', label: 'Universal APK' }], package: 'Debug-signed universal APK' },
+  android: { title: 'Android', subtitle: 'Android 8+ · release-signed APK', icon: Smartphone, arches: [{ value: 'universal', label: 'Universal APK' }], package: 'Release-signed universal APK' },
 }
 
 function unixInstaller(platform: Platform) {
@@ -102,6 +102,7 @@ export default function Deployment() {
   const [progress, setProgress] = useState(0)
   const [stage, setStage] = useState('')
   const [packageInfo, setPackageInfo] = useState<{ name: string; blob: Blob; sha: string; size: number } | null>(null)
+  const [androidKey, setAndroidKey] = useState<{ id: string; alias: string; certificateSha256: string; storePassword: string; keyPassword: string; deviceId?: string | null } | null>(null)
   const canOptInForUnattended = platform === 'windows' && (organizationRole === 'owner' || organizationRole === 'admin')
 
   useEffect(() => {
@@ -127,24 +128,50 @@ export default function Deployment() {
       setManifest(latestManifest)
       setManifestError('')
       const currentArtifact = latestManifest.find((item) => item.platform === platform && item.arch === arch)
-      if (!currentArtifact) throw new Error(`No agent build is available for ${platform}/${arch}`)
-      setStage('Fetching verified native agent')
-      const response = await fetch(artifactPath(currentArtifact.file), { cache: 'no-store' })
-      if (!response.ok) throw new Error(`Agent download failed (${response.status})`)
-      const binary = await response.arrayBuffer()
-      const binaryHash = await sha256(binary)
-      if (binaryHash !== currentArtifact.sha256) throw new Error('Agent checksum mismatch. Package generation stopped.')
-      setProgress(24); setStage('Preparing relay and device policy')
-      if (!userId || !activeOrganizationId) throw new Error('Could not determine the signed-in organization.')
       if (platform === 'android') {
         setProgress(48)
-        setStage('Verifying universal Android APK')
-        const blob = new Blob([binary], { type: 'application/vnd.android.package-archive' })
-        const name = `agon-agent-android-universal-v${currentArtifact.version}.apk`
+        setStage('Creating a unique Android signing key')
+        const keyResponse = await requestControlPlane('/api/agon/agent-installer/android', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ group, allowUnattended: access === 'unattended' }),
+        })
+        const contentType = keyResponse.headers.get('content-type') || ''
+        if (!keyResponse.ok) {
+          const error = await keyResponse.json().catch(() => ({}))
+          throw new Error(error.error || `Android signing failed (${keyResponse.status})`)
+        }
+        if (contentType.includes('json')) {
+          const data = await keyResponse.json()
+          setAndroidKey(data.signingKey)
+          setProgress(100)
+          setStage('Signing key recorded')
+          addAudit({
+            action: 'installer.generated',
+            actor: 'Operator',
+            target: 'Android · signing key',
+            category: 'deployment',
+            severity: 'success',
+            detail: `Random key ${data.signingKey?.alias || ''} recorded. ${data.message || ''}`,
+            ip: 'This browser',
+          })
+          toast('Android signing key recorded', data.signingKey?.certificateSha256 || 'Shown in the device record when the agent reports it.')
+          return
+        }
+        const blob = await keyResponse.blob()
+        const recorded = {
+          id: keyResponse.headers.get('x-agon-key-id') || '',
+          alias: keyResponse.headers.get('x-agon-key-alias') || '',
+          certificateSha256: keyResponse.headers.get('x-agon-cert-sha256') || '',
+          storePassword: keyResponse.headers.get('x-agon-store-password') || '',
+          keyPassword: keyResponse.headers.get('x-agon-key-password') || '',
+        }
+        setAndroidKey(recorded)
+        const name = `agon-agent-android-${recorded.alias || 'custom'}.apk`
         const packageHash = await sha256(await blob.arrayBuffer())
         setPackageInfo({ name, blob, sha: packageHash, size: blob.size })
         setProgress(100)
-        setStage('Android APK ready')
+        setStage('Release-signed Android APK ready')
         const url = URL.createObjectURL(blob)
         const anchor = document.createElement('a')
         anchor.href = url
@@ -154,15 +181,16 @@ export default function Deployment() {
         addAudit({
           action: 'installer.generated',
           actor: 'Operator',
-          target: 'Android · universal APK',
+          target: 'Android · release-signed APK',
           category: 'deployment',
           severity: 'success',
-          detail: `${name} downloaded. It uses the published relay and asks for an organization ID on device.`,
+          detail: `${name} signed with ${recorded.alias}. Certificate ${recorded.certificateSha256}. The key is stored on the admin device record.`,
           ip: 'This browser',
         })
-        toast('Android APK downloaded', `${name} · ${formatBytes(blob.size)}`)
+        toast('Android APK signed and downloaded', `${recorded.alias} · ${formatBytes(blob.size)}`)
         return
       }
+      if (!currentArtifact) throw new Error(`No agent build is available for ${platform}/${arch}`)
       if (platform === 'windows' && arch === 'amd64') {
         setProgress(36)
         setStage('Building configured Windows MSI')
@@ -204,6 +232,14 @@ export default function Deployment() {
         toast('Windows MSI built and downloaded', `${name} · ${formatBytes(blob.size)}`)
         return
       }
+      setStage('Fetching verified native agent')
+      const response = await fetch(artifactPath(currentArtifact.file), { cache: 'no-store' })
+      if (!response.ok) throw new Error(`Agent download failed (${response.status})`)
+      const binary = await response.arrayBuffer()
+      const binaryHash = await sha256(binary)
+      if (binaryHash !== currentArtifact.sha256) throw new Error('Agent checksum mismatch. Package generation stopped.')
+      setProgress(24); setStage('Preparing relay and device policy')
+      if (!userId || !activeOrganizationId) throw new Error('Could not determine the signed-in organization.')
       const serverUrl = HOSTED_CONTROL_PLANE_URL
       const config = JSON.stringify({ serverUrl, ownerId: activeOrganizationId, deviceName: '', group, allowUnattended: canOptInForUnattended && access === 'unattended' }, null, 2) + '\n'
       const configHash = await sha256(config)
@@ -266,8 +302,9 @@ export default function Deployment() {
             {artifact && <div className="mt-3 rounded-xl border border-white/[0.055] p-3"><div className="flex items-center justify-between"><span className="font-mono text-[8px] uppercase tracking-wider text-slate-600">{platform === 'android' ? 'APK' : 'Native binary'} SHA-256</span><button onClick={() => copy(artifact.sha256, 'Checksum')} className="text-slate-600 hover:text-white"><Copy size={12}/></button></div><p className="mt-2 break-all font-mono text-[8px] leading-4 text-slate-500">{artifact.sha256}</p></div>}
             {building && <div className="mt-4"><div className="mb-2 flex items-center justify-between text-[10px]"><span className="flex items-center gap-2 text-slate-400"><LoaderCircle size={12} className="animate-spin"/>{stage}</span><span className="font-mono text-lime-300">{Math.round(progress)}%</span></div><div className="h-1 overflow-hidden rounded-full bg-white/[0.06]"><motion.div className="h-full bg-lime-300" animate={{ width: `${progress}%` }}/></div></div>}
             {packageInfo && <motion.div className="mt-4 rounded-xl border border-lime-300/15 bg-lime-300/[0.04] p-4" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}><div className="flex items-center gap-2 text-[11px] font-medium text-lime-200"><PackageCheck size={15}/>Build verified</div><p className="mt-2 break-all font-mono text-[9px] text-slate-500">{packageInfo.name}</p><div className="mt-3 flex items-center justify-between text-[9px] text-slate-500"><span>{formatBytes(packageInfo.size)}</span><button onClick={downloadAgain} className="text-lime-300 hover:text-lime-200">Download again</button></div></motion.div>}
+            {androidKey && <div className="mt-4 rounded-xl border border-cyan-300/15 bg-cyan-300/[0.04] p-4 text-[10px] leading-5 text-slate-300"><p className="font-medium text-cyan-100">Android signing key recorded</p><p className="mt-2 font-mono break-all">Alias {androidKey.alias}</p><p className="font-mono break-all">SHA-256 {androidKey.certificateSha256}</p><p className="font-mono break-all">Store password {androidKey.storePassword}</p><p className="font-mono break-all">Key password {androidKey.keyPassword}</p><p className="mt-2 text-slate-500">This key is stored with the device in the admin dashboard. It is not written to GitHub.</p></div>}
             {manifestError && <p className="mt-3 text-[10px] text-rose-300">{manifestError}</p>}
-              <Button variant="primary" size="lg" className="mt-5 w-full" icon={building ? LoaderCircle : CloudDownload} disabled={building || !artifact} onClick={buildPackage}>{building ? 'Building native package…' : packageInfo ? 'Build another installer' : platform === 'windows' && arch === 'amd64' ? 'Build & download Windows MSI' : platform === 'android' ? 'Download Android APK' : 'Build & download installer'}</Button>
+              <Button variant="primary" size="lg" className="mt-5 w-full" icon={building ? LoaderCircle : CloudDownload} disabled={building || (!artifact && platform !== 'android')} onClick={buildPackage}>{building ? 'Building native package…' : packageInfo ? 'Build another installer' : platform === 'windows' && arch === 'amd64' ? 'Build & download Windows MSI' : platform === 'android' ? 'Build signed Android APK' : 'Build & download installer'}</Button>
             <p className="mt-3 flex items-start gap-2 text-[9px] leading-4 text-slate-600"><ShieldCheck size={12} className="mt-0.5 shrink-0"/>The agent binary is checksum-verified. It generates its own long-lived device credential locally; the hosted relay stores only a hash and requires code confirmation before activation.</p>
           </div>
         </Panel>
