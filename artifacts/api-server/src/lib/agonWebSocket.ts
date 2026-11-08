@@ -18,6 +18,7 @@ const allowedActions = new Set([
   "inventory.refresh",
   "diagnostics.network",
   "session.request",
+  "agent.upgrade",
 ]);
 const dispatchingDevices = new Set<string>();
 const retryRunningJobsAfterMs = 60_000;
@@ -39,6 +40,7 @@ type AgentDeviceInfo = {
   memoryUsedBytes?: number;
   diskTotalBytes?: number;
   diskUsedBytes?: number;
+  signingCertSha256?: string;
 };
 
 type AgentMessage = {
@@ -109,6 +111,18 @@ async function updateHeartbeat(
   const current = await getRecord(ownerId, "device", deviceId);
   if (!current) return;
   const lastSeen = new Date().toISOString();
+  const signingCertSha256 = text(info?.signingCertSha256, text(current.data.signingCertSha256)).toLowerCase();
+  let signingKeyId = text(current.data.signingKeyId);
+  if (signingCertSha256) {
+    const keys = await listRecords(ownerId, "signing_key", 500);
+    const match = keys.find((key) => text(key.data.certificateSha256).toLowerCase() === signingCertSha256);
+    if (match) {
+      signingKeyId = match.id;
+      if (text(match.data.deviceId) !== deviceId) {
+        await saveRecord(ownerId, "signing_key", match.id, { ...match.data, deviceId });
+      }
+    }
+  }
   await saveRecord(ownerId, "device", deviceId, {
     ...current.data,
     hostname: text(info?.hostname, text(current.data.hostname)),
@@ -128,6 +142,8 @@ async function updateHeartbeat(
     memoryUsedBytes: byteCount(info?.memoryUsedBytes, current.data.memoryUsedBytes),
     diskTotalBytes: byteCount(info?.diskTotalBytes, current.data.diskTotalBytes),
     diskUsedBytes: byteCount(info?.diskUsedBytes, current.data.diskUsedBytes),
+    signingCertSha256: signingCertSha256 || current.data.signingCertSha256 || "",
+    signingKeyId,
     online: true,
     lastSeen,
   });
