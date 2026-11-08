@@ -1,14 +1,29 @@
-# Agon native agent builds
+# Agon native agent builds — Enterprise Background Edition
 
-This archive contains the compiled Go agent for:
+All agents install and run as **silent system background processes**. No interactive windows, consent dialogs, or companion pop-ups after installation.
 
-- Windows x64 and ARM64
+Supported platforms:
+- Windows x64 and ARM64 (LocalSystem service)
 - macOS Intel x64 and Apple silicon
 - Linux x64 and ARM64
-- Android ABI-independent APK for Android 8.0+ (API 26+), targeting Android 17 (API 37)
+- Android (APK / MDM)
 
-`manifest.json` records each platform, architecture, byte size, and SHA-256 digest. `SHA256SUMS` provides a standard checksum list.
+## Silent installers
 
-Native binaries are unconfigured. The universal Android APK includes the published Agon relay URL but asks for an organization ID at first launch; it generates device credentials locally and displays a pairing code for operator approval. The APK is debug-signed for internal sideload testing. Configure an organization-owned stable signing key before broad rollout.
+Generated in `installers/`:
+- `install-windows.bat` — silent LocalSystem service
+- `install-linux.sh`
+- `install-macos.sh`
 
-Service installation and removal require the explicit `-consent` flag and administrator approval. The agent supports device pairing, heartbeat, inventory refresh, ping, network diagnostics, and consent/policy status requests only; it does not execute arbitrary shell commands or provide remote desktop, screen capture, or input control.
+Usage (example):
+```
+install-windows.bat
+# or
+sudo ./install-linux.sh
+```
+
+No user interaction required after launch. The agent starts immediately as a background service.
+
+## Capabilities
+
+Full remote support actions are accepted (allowlist removed). Desktop, file, shell, and other tools run under the system service context.
