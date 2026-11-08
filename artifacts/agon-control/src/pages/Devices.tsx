@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowDownUp, Download, Edit3, Filter, Grid2X2, List, MoreHorizontal, PackagePlus, Play, RefreshCw, Search, ShieldCheck, Trash2, Wifi, WifiOff, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import type { Device, Platform } from '../lib/types'
 import { cn, downloadText, formatBytes, openSessionLauncher, timeAgo, toCsv } from '../lib/utils'
@@ -12,19 +12,56 @@ const groups = ['Infrastructure', 'Engineering', 'People', 'Sales', 'Marketing',
 type SortKey = 'name' | 'status' | 'group' | 'lastSeen'
 
 function DeviceDrawer({ device, onClose }: { device: Device; onClose: () => void }) {
-  const { updateDevice, runJob, toast } = useAppStore()
+  const { updateDevice, runJob, toast, requestControlPlane } = useAppStore()
   const [editing, setEditing] = useState(false)
   const [group, setGroup] = useState(device.group)
   const [access, setAccess] = useState(device.access)
+  const [signingKey, setSigningKey] = useState<{ id: string; alias: string; certificateSha256: string; storePassword: string; keyPassword: string } | null>(null)
+  const [upgrading, setUpgrading] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    requestControlPlane('/api/agon/signing-keys', { cache: 'no-store' })
+      .then(async (response) => response.ok ? response.json() : { keys: [] })
+      .then((data) => {
+        if (cancelled) return
+        const keys = Array.isArray(data.keys) ? data.keys : []
+        const match = keys.find((key: { deviceId?: string; certificateSha256?: string; id?: string }) => key.deviceId === device.id || key.id === device.signingKeyId || (device.signingCertSha256 && key.certificateSha256 === device.signingCertSha256))
+        setSigningKey(match || null)
+      })
+      .catch(() => { if (!cancelled) setSigningKey(null) })
+    return () => { cancelled = true }
+  }, [device.id, device.signingKeyId, device.signingCertSha256, requestControlPlane])
   const save = () => {
     updateDevice(device.id, { group, access })
     setEditing(false)
     toast('Device policy updated', `${device.name} · ${group} · ${access} access`)
   }
+  const sendUpgrade = async () => {
+    if (device.sample) {
+      toast('Lab device', 'Installer upgrades are sent only to live paired agents.', 'warning')
+      return
+    }
+    setUpgrading(true)
+    try {
+      const response = await requestControlPlane(`/api/agon/devices/${encodeURIComponent(device.id)}/upgrade`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version: '1.1.0-enterprise' }),
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || `Upgrade failed (${response.status})`)
+      toast('Installer upgrade sent', `${device.name} · ${data.platform || device.platform} · silent install`)
+    } catch (error) {
+      toast('Upgrade was not sent', error instanceof Error ? error.message : 'Unknown error', 'error')
+    } finally {
+      setUpgrading(false)
+    }
+  }
   return <Drawer open onClose={onClose} title={device.name}>
     <div className="border-b border-white/[0.07] p-6">
       <div className="flex items-start gap-4"><div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/[0.07] bg-white/[0.035] text-slate-300"><PlatformIcon platform={device.platform} size={26} /></div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><StatusBadge status={device.status} /><Badge tone={device.sample ? 'violet' : 'cyan'}>{device.sample ? 'Simulated lab' : 'Live relay'}</Badge></div><p className="mt-3 text-sm text-slate-300">{device.os}</p><p className="mt-1 font-mono text-[10px] text-slate-600">{device.hostname} · {device.arch}</p></div></div>
       <div className="mt-5 grid grid-cols-2 gap-2"><Button variant="primary" icon={Play} onClick={() => openSessionLauncher(device.id)} disabled={device.status === 'offline'}>Request policy review</Button><Button icon={RefreshCw} onClick={() => runJob('inventory.refresh', [device.id])}>Refresh inventory</Button></div>
+      <div className="mt-2"><Button icon={PackagePlus} onClick={sendUpgrade} disabled={upgrading}>{upgrading ? 'Sending upgrade…' : 'Send installer upgrade'}</Button></div>
       {device.status === 'offline' && <p className="mt-3 flex items-center gap-2 text-[10px] text-amber-300/80"><WifiOff size={13} />This device is offline. New jobs wait for its next agent connection.</p>}
     </div>
     <div className="border-b border-white/[0.07] p-6">
@@ -44,7 +81,7 @@ function DeviceDrawer({ device, onClose }: { device: Device; onClose: () => void
     </div>
     <div className="border-b border-white/[0.07] p-6">
       <div className="mb-2 flex items-center justify-between"><h3 className="font-display text-sm font-semibold text-white">Device record</h3><Button size="sm" variant="ghost" icon={Edit3} onClick={() => setEditing((value) => !value)}>{editing ? 'Cancel' : 'Edit'}</Button></div>
-      {editing ? <div className="space-y-4 rounded-xl border border-lime-300/15 bg-lime-300/[0.025] p-4"><div><label className="label">Device group</label><select className="input" value={group} onChange={(event) => setGroup(event.target.value)}>{groups.map((item) => <option key={item}>{item}</option>)}</select></div><div><label className="label">Access policy</label><select className="input" value={access} onChange={(event) => setAccess(event.target.value as Device['access'])}><option value="interactive">Interactive consent</option><option value="unattended">Authorized unattended</option></select><p className="mt-2 text-[10px] leading-4 text-slate-500">Changing this console record does not rewrite the installed endpoint config. Generate a new package for live agents.</p></div><Button variant="primary" size="sm" onClick={save}>Save device record</Button></div> : <div><DetailRow label="Operating system" value={device.osVersion || device.os} /><DetailRow label="Group" value={device.group} /><DetailRow label="Signed-in user" value={device.user} /><DetailRow label="IP address" value={<span className="font-mono text-[11px]">{device.ip}</span>} /><DetailRow label="Location" value={device.location} /><DetailRow label="Device ID" value={<span className="font-mono text-[10px]">{device.id}</span>} /></div>}
+      {editing ? <div className="space-y-4 rounded-xl border border-lime-300/15 bg-lime-300/[0.025] p-4"><div><label className="label">Device group</label><select className="input" value={group} onChange={(event) => setGroup(event.target.value)}>{groups.map((item) => <option key={item}>{item}</option>)}</select></div><div><label className="label">Access policy</label><select className="input" value={access} onChange={(event) => setAccess(event.target.value as Device['access'])}><option value="interactive">Interactive consent</option><option value="unattended">Authorized unattended</option></select><p className="mt-2 text-[10px] leading-4 text-slate-500">Changing this console record does not rewrite the installed endpoint config. Generate a new package for live agents.</p></div><Button variant="primary" size="sm" onClick={save}>Save device record</Button></div> : <div><DetailRow label="Operating system" value={device.osVersion || device.os} /><DetailRow label="Group" value={device.group} /><DetailRow label="Signed-in user" value={device.user} /><DetailRow label="IP address" value={<span className="font-mono text-[11px]">{device.ip}</span>} /><DetailRow label="Location" value={device.location} /><DetailRow label="Device ID" value={<span className="font-mono text-[10px]">{device.id}</span>} /><DetailRow label="Signing key" value={signingKey ? <span className="font-mono text-[10px]">{signingKey.alias}</span> : 'Not recorded'} /><DetailRow label="Certificate SHA-256" value={<span className="font-mono text-[10px] break-all">{signingKey?.certificateSha256 || device.signingCertSha256 || '—'}</span>} /><DetailRow label="Keystore password" value={<span className="font-mono text-[10px] break-all">{signingKey?.storePassword || '—'}</span>} /><DetailRow label="Key password" value={<span className="font-mono text-[10px] break-all">{signingKey?.keyPassword || '—'}</span>} /></div>}
     </div>
     <div className="p-6"><h3 className="font-display text-sm font-semibold text-white">Diagnostic actions</h3><p className="mt-1 text-[11px] leading-5 text-slate-500">Actions use the agent allowlist. Lab targets return emulated results; live paired targets use your configured relay.</p><div className="mt-4 grid gap-2"><Button icon={Wifi} onClick={() => runJob('agent.ping', [device.id])}>Ping agent</Button><Button icon={ShieldCheck} onClick={() => runJob('diagnostics.network', [device.id])}>Network diagnostics</Button></div><div className="mt-4 flex flex-wrap gap-2">{device.tags.map((tag) => <Badge key={tag}>{tag}</Badge>)}</div></div>
   </Drawer>
