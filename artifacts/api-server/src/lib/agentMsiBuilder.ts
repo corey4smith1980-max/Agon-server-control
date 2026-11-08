@@ -28,6 +28,7 @@ export type WindowsMsiInput = {
   organizationId: string;
   group: string;
   allowUnattended: boolean;
+  installerName?: string;
 };
 
 export type WindowsMsiOutput = {
@@ -87,18 +88,40 @@ function runWixl(args: string[]): Promise<void> {
   });
 }
 
-function wixDocument(binaryPath: string, configPath: string, version: string, architecture: string): string {
+function msiVersion(version: string): string {
+  const match = version.match(/(\d+)\.(\d+)\.(\d+)/);
+  return match ? `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}` : "1.0.0";
+}
+
+function wixDocument(
+  binaryPath: string,
+  configPath: string,
+  version: string,
+  architecture: string,
+  input: WindowsMsiInput,
+): string {
+  const sessionMode = input.allowUnattended ? "unattended" : "optional";
+  const productName = xml(input.installerName?.trim() || "Agon Agent");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <Product Id="*" Name="Agon Agent" Language="1033" Version="${xml(version)}" Manufacturer="Agon" UpgradeCode="${upgradeCode}">
-    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="${architecture}" />
+  <Product Id="*" Name="${productName}" Language="1033" Version="${xml(msiVersion(version))}" Manufacturer="Agon" UpgradeCode="${upgradeCode}">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" Platform="${architecture}" Description="ScreenConnect-style silent Agon access agent" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Agon Agent is already installed." />
     <Media Id="1" Cabinet="agon-agent.cab" EmbedCab="yes" />
+    <Property Id="SERVERURL" Value="${xml(hostedControlPlaneUrl)}" />
+    <Property Id="OWNERID" Value="${xml(input.organizationId)}" />
+    <Property Id="DEVICEGROUP" Value="${xml(input.group)}" />
+    <Property Id="SESSIONMODE" Value="${sessionMode}" />
+    <Property Id="PRIVILEGELEVEL" Value="system" />
+    <Property Id="ALLOWUNATTENDED" Value="${input.allowUnattended ? "1" : "0"}" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLDIR" Name="Agon">
           <Component Id="AgentService" Guid="B0A9EBD4-5DE8-4D6E-886B-87C8CF72B8D1" Win64="yes">
             <File Id="AgonAgentExe" Source="${xml(binaryPath)}" Name="agon-agent.exe" KeyPath="yes" />
-            <ServiceInstall Id="AgonAgentServiceInstall" Name="AgonAgent" DisplayName="Agon Agent" Description="Agon consent-based endpoint support agent" Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem" Arguments="-config &quot;[AGENTDATA]agent.json&quot;" />
+            <ServiceInstall Id="AgonAgentServiceInstall" Name="AgonAgent" DisplayName="Agon Agent" Description="Agon silent background access agent" Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem" Arguments="-config &quot;[AGENTDATA]agent.json&quot; -session-mode [SESSIONMODE] -privilege-level system" />
             <ServiceControl Id="AgonAgentServiceControl" Name="AgonAgent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
           </Component>
         </Directory>
@@ -106,23 +129,25 @@ function wixDocument(binaryPath: string, configPath: string, version: string, ar
       <Directory Id="CommonAppDataFolder">
         <Directory Id="AGENTDATA" Name="Agon">
           <Component Id="AgentConfiguration" Guid="594E0131-2BA0-4C3E-8BA2-D776AC3BE756" Win64="yes">
-            <File Id="AgonAgentConfig" Source="${xml(configPath)}" KeyPath="yes" />
+            <File Id="AgonAgentConfig" Source="${xml(configPath)}" Name="agent.json" KeyPath="yes" />
           </Component>
         </Directory>
       </Directory>
       <Directory Id="ProgramMenuFolder">
         <Directory Id="AgonProgramMenu" Name="Agon Agent">
           <Component Id="VisibleCompanionShortcut" Guid="812E9B56-17B8-4F52-90B4-8199E8ED7819" Win64="yes">
-            <Shortcut Id="AgonCompanionShortcut" Name="Agon Desktop Companion" Description="View device pairing status and connect the visible support companion" Target="[INSTALLDIR]agon-agent.exe" Arguments="-config &quot;[AGENTDATA]agent.json&quot; -companion" WorkingDirectory="INSTALLDIR" />
-            <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run" Name="AgonDesktopCompanion" Type="string" Value="&quot;[INSTALLDIR]agon-agent.exe&quot; -config &quot;[AGENTDATA]agent.json&quot; -companion" KeyPath="yes" />
+            <Shortcut Id="AgonCompanionShortcut" Name="Agon Desktop Companion" Description="Optional attended companion. Not installed by the silent access feature." Target="[INSTALLDIR]agon-agent.exe" Arguments="-config &quot;[AGENTDATA]agent.json&quot; -companion" WorkingDirectory="INSTALLDIR" />
+            <RegistryValue Root="HKLM" Key="Software\\Agon\\Agent" Name="CompanionInstalled" Type="integer" Value="0" KeyPath="yes" />
             <RemoveFolder Id="RemoveAgonProgramMenu" Directory="AgonProgramMenu" On="uninstall" />
           </Component>
         </Directory>
       </Directory>
     </Directory>
-    <Feature Id="AgonAgentFeature" Title="Agon Agent" Level="1">
+    <Feature Id="AgonAgentFeature" Title="Agon Agent" Level="1" Description="Silent per-machine service. Install with msiexec /i Agon.msi /qn">
       <ComponentRef Id="AgentService" />
       <ComponentRef Id="AgentConfiguration" />
+    </Feature>
+    <Feature Id="AgonCompanionFeature" Title="Agon Desktop Companion" Level="0" Description="Optional visible companion. Left out of the ScreenConnect-style silent installer.">
       <ComponentRef Id="VisibleCompanionShortcut" />
     </Feature>
   </Product>
@@ -164,6 +189,9 @@ export async function buildWindowsMsi(input: WindowsMsiInput): Promise<WindowsMs
       deviceName: "",
       group: input.group,
       allowUnattended: input.allowUnattended,
+      sessionMode: input.allowUnattended ? "unattended" : "optional",
+      privilegeLevel: "system",
+      installerStyle: "screenconnect",
     },
     null,
     2,
@@ -181,6 +209,7 @@ export async function buildWindowsMsi(input: WindowsMsiInput): Promise<WindowsMs
         configPath,
         artifact.version,
         "x64",
+        input,
       ),
     );
     await runWixl(["--arch", "x64", "--output", msiPath, wxsPath]);
