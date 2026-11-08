@@ -2,6 +2,9 @@ package com.agon.agent;
 
 import android.app.ActivityManager;
 import android.content.Context;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.Signature;
 import android.os.Build;
 import android.os.Environment;
 import android.os.SystemClock;
@@ -11,10 +14,13 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Collections;
@@ -328,6 +334,10 @@ final class AndroidAgentConnection {
                     case "diagnostics.network":
                         response.put("result", networkDiagnostics());
                         break;
+                    case "agent.upgrade":
+                        JSONObject upgradePayload = message.optJSONObject("payload");
+                        response.put("result", installUpgrade(upgradePayload == null ? new JSONObject() : upgradePayload));
+                        break;
                     case "session.request":
                         throw new IllegalStateException("Android screen sharing and remote input are not enabled in this APK.");
                     default:
@@ -370,9 +380,61 @@ final class AndroidAgentConnection {
         long usedDisk = Math.max(0, totalDisk - disk.getAvailableBytes());
         info.put("diskTotalBytes", totalDisk);
         info.put("diskUsedBytes", usedDisk);
+        info.put("signingCertSha256", signingCertificateSha256());
         long bootTime = System.currentTimeMillis() - SystemClock.elapsedRealtime();
         info.put("bootId", Long.toString(bootTime));
         return info;
+    }
+
+    private String signingCertificateSha256() {
+        try {
+            PackageManager manager = context.getPackageManager();
+            Signature[] signatures;
+            if (Build.VERSION.SDK_INT >= 28) {
+                PackageInfo info = manager.getPackageInfo(context.getPackageName(), PackageManager.GET_SIGNING_CERTIFICATES);
+                signatures = info.signingInfo == null ? new Signature[0] : info.signingInfo.getApkContentsSigners();
+            } else {
+                PackageInfo info = manager.getPackageInfo(context.getPackageName(), PackageManager.GET_SIGNATURES);
+                signatures = info.signatures == null ? new Signature[0] : info.signatures;
+            }
+            if (signatures.length == 0) return "";
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(signatures[0].toByteArray());
+            StringBuilder hex = new StringBuilder();
+            for (byte value : digest) hex.append(String.format(Locale.US, "%02x", value));
+            return hex.toString();
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private JSONObject installUpgrade(JSONObject payload) throws Exception {
+        String packageUrl = payload.optString("packageUrl", "");
+        JSONObject result = new JSONObject();
+        result.put("accepted", true);
+        result.put("platform", "android");
+        result.put("silent", true);
+        result.put("version", payload.optString("version", ""));
+        if (packageUrl.isEmpty()) {
+            result.put("note", "No installer URL was included.");
+            return result;
+        }
+        Request request = new Request.Builder().url(packageUrl).get().build();
+        try (Response download = http.newCall(request).execute()) {
+            if (!download.isSuccessful() || download.body() == null) {
+                throw new IllegalStateException("Installer download failed (" + download.code() + ").");
+            }
+            File apk = new File(context.getCacheDir(), "agon-upgrade.apk");
+            try (FileOutputStream output = new FileOutputStream(apk)) {
+                output.write(download.body().bytes());
+            }
+            Process process = new ProcessBuilder("pm", "install", "-r", "-d", apk.getAbsolutePath())
+                    .redirectErrorStream(true)
+                    .start();
+            int code = process.waitFor();
+            result.put("installerExit", code);
+            result.put("note", code == 0 ? "Package install requested with no user window." : "pm install returned a non-zero status. Device-owner or system privilege is required for a silent upgrade.");
+        }
+        return result;
     }
 
     private JSONArray ipAddresses() {
